@@ -1318,7 +1318,7 @@ export class ChatwootService {
     // O processamento completo (delay + envio ao WhatsApp + persistência) pode levar
     // mais que o WEBHOOK_TIMEOUT do Chatwoot (default 5s), o que faz o Chatwoot marcar
     // a mensagem como falha ("Net::ReadTimeout" / mensagem vermelha) mesmo ela tendo
-    // sido entregue. Processar em background elimina essa causa na raiz. Ver tarefas/T03.
+    // sido entregue. Processar em background elimina essa causa na raiz. Ver tarefas/t03.
     void this.processWebhook(instance, body).catch((error) => {
       this.logger.error(`Error processing Chatwoot webhook: ${error}`);
     });
@@ -1694,23 +1694,53 @@ export class ChatwootService {
   }
 
   private async getQuotedMessage(msg: any, instance: InstanceDto): Promise<Quoted> {
-    if (msg?.content_attributes?.in_reply_to) {
-      const message = await this.prismaRepository.message.findFirst({
-        where: {
-          chatwootMessageId: msg?.content_attributes?.in_reply_to,
-          instanceId: instance.instanceId,
-        },
+    const attributes = msg?.content_attributes ?? {};
+    const inReplyTo = attributes.in_reply_to;
+    const inReplyToExternalId: string | undefined = attributes.in_reply_to_external_id;
+
+    let target: MessageModel | null = null;
+
+    // 1) Preferência: id nativo do WhatsApp (source_id = "WAID:<stanzaId>").
+    // É imune à contaminação/duplicação do chatwootMessageId, que fazia a resposta
+    // citar uma mensagem de outra conversa (ver tarefas/t02).
+    // Usa filtro JSON do Prisma (agnóstico de provider) em vez de SQL raw.
+    if (typeof inReplyToExternalId === 'string' && inReplyToExternalId.startsWith('WAID:')) {
+      const waId = inReplyToExternalId.slice('WAID:'.length);
+      target = await this.prismaRepository.message.findFirst({
+        where: { instanceId: instance.instanceId, key: { path: ['id'], equals: waId } },
+        orderBy: { messageTimestamp: 'desc' },
       });
+    }
 
-      const key = message?.key as WAMessageKey;
-      const messageContent = message?.message as WAMessageContent;
+    // 2) Fallback: id interno do Chatwoot. Escopa pela conversa quando disponível e recai
+    // para a busca apenas por instanceId + chatwootMessageId, preservando o comportamento
+    // anterior quando chatwootConversationId é nulo/legado (ex.: canais Meta/Evolution).
+    if (!target && inReplyTo) {
+      const baseWhere = { chatwootMessageId: inReplyTo, instanceId: instance.instanceId };
 
-      if (messageContent && key?.id) {
-        return {
-          key: key,
-          message: messageContent,
-        };
+      if (msg?.conversation?.id) {
+        target = await this.prismaRepository.message.findFirst({
+          where: { ...baseWhere, chatwootConversationId: msg.conversation.id },
+          orderBy: { messageTimestamp: 'desc' },
+        });
       }
+
+      if (!target) {
+        target = await this.prismaRepository.message.findFirst({
+          where: baseWhere,
+          orderBy: { messageTimestamp: 'desc' },
+        });
+      }
+    }
+
+    const key = target?.key as WAMessageKey;
+    const messageContent = target?.message as WAMessageContent;
+
+    if (messageContent && key?.id) {
+      return {
+        key: key,
+        message: messageContent,
+      };
     }
 
     return null;
@@ -2048,6 +2078,7 @@ export class ChatwootService {
               chatwootMessageId: {
                 not: null,
               },
+              instanceId: instance.instanceId,
             },
           });
 
