@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Setting" ALTER COLUMN "msgCall" SET DATA TYPE TEXT;

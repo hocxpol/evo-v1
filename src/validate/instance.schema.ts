@@ -37,7 +37,11 @@ export const instanceSchema: JSONSchema7 = {
     },
     // Settings
     rejectCall: { type: 'boolean' },
-    msgCall: { type: 'string' },
+    msgCall: {
+      type: 'string',
+      maxLength: 4096,
+      description: 'Message sent when rejecting a call. Supports line breaks (\\n).',
+    },
     groupsIgnore: { type: 'boolean' },
     alwaysOnline: { type: 'boolean' },
     readMessages: { type: 'boolean' },

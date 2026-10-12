@@ -268,7 +268,7 @@ model Proxy {
 model Setting {
   id              String    @id @default(cuid())
   rejectCall      Boolean   @default(false)
-  msgCall         String?   @db.VarChar(100)
+  msgCall         String?   @db.Text
   groupsIgnore    Boolean   @default(false)
   alwaysOnline    Boolean   @default(false)
   readMessages    Boolean   @default(false)

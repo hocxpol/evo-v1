@@ -58,6 +58,17 @@ export class ChatwootService {
 
   private pgClient = postgresClient.getChatwootConnection();
 
+  private normalizeChatwootText(value: string): string {
+    if (typeof value !== 'string') return '';
+    return value
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replaceAll('\\r\\n', '\n')
+      .replaceAll('\\n', '\n')
+      .replace(/\\+\r\n|\\+\n/g, '\n')
+      .replace(/\\\s*$/gm, '')
+      .replaceAll('\r\n', '\n');
+  }
+
   private async getProvider(instance: InstanceDto): Promise<ChatwootModel | null> {
     const cacheKey = `${instance.instanceName}:getProvider`;
     if (await this.cache.has(cacheKey)) {
@@ -1337,7 +1348,7 @@ export class ChatwootService {
         body.conversation.meta.sender?.identifier || body.conversation.meta.sender?.phone_number.replace('+', '');
       // Chatwoot to Whatsapp
       const messageReceived = body.content
-        ? body.content
+        ? this.normalizeChatwootText(body.content)
             .replaceAll(/(?<!\*)\*((?!\s)([^\n*]+?)(?<!\s))\*(?!\*)/g, '_$1_') // Substitui * por _
             .replaceAll(/\*{2}((?!\s)([^\n*]+?)(?<!\s))\*{2}/g, '*$1*') // Substitui ** por *
             .replaceAll(/~{2}((?!\s)([^\n*]+?)(?<!\s))~{2}/g, '~$1~') // Substitui ~~ por ~
@@ -1455,9 +1466,8 @@ export class ChatwootService {
         if (senderName === null || senderName === undefined) {
           formatText = messageReceived;
         } else {
-          const formattedDelimiter = this.provider.signDelimiter
-            ? this.provider.signDelimiter.replaceAll('\\n', '\n')
-            : '\n';
+          const formattedDelimiter =
+            (this.provider.signDelimiter && this.normalizeChatwootText(this.provider.signDelimiter)) || '\n';
           const textToConcat = this.provider.signMsg ? [`*${senderName}:*`] : [];
           textToConcat.push(messageReceived);
 
@@ -1589,7 +1599,7 @@ export class ChatwootService {
       if (body.message_type === 'template' && body.event === 'message_created') {
         const data: SendTextDto = {
           number: chatId,
-          text: body.content.replace(/\\\r\n|\\\n|\n/g, '\n'),
+          text: this.normalizeChatwootText(body.content),
           delay: Math.floor(Math.random() * (2000 - 500 + 1)) + 500,
         };
 
