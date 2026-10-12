@@ -1366,28 +1366,85 @@ export class ChatwootService {
 
       const senderName = body?.conversation?.messages[0]?.sender?.available_name || body?.sender?.name;
       const waInstance = this.waMonitor.waInstances[instance.instanceName];
-      instance.instanceId = waInstance.instanceId;
+      // Optional chaining: a instância pode não estar em memória (inbox órfão de instância deletada
+      // ou janela de restart). O acesso direto lançava TypeError e abortava TODO o processamento,
+      // tornando o guard `!waInstance` do ramo de envio código morto (ver T05/A12).
+      instance.instanceId = waInstance?.instanceId;
 
       if (body.event === 'message_updated' && body.content_attributes?.deleted) {
-        const message = await this.prismaRepository.message.findFirst({
-          where: {
-            chatwootMessageId: body.id,
-            instanceId: instance.instanceId,
-          },
-        });
+        // Sem a instância em memória não há conexão para revogar. Guard evita também consultas
+        // com `instanceId` indefinido (o Prisma omitiria o filtro de instância).
+        if (!waInstance || !instance.instanceId) {
+          this.logger.warn(
+            `[CW.DELETE] Instância não encontrada/em memória; nada a revogar. instance=${instance.instanceName}`,
+          );
+          return { message: 'bot' };
+        }
 
-        if (message) {
-          const key = message.key as WAMessageKey;
+        // Resolve a(s) mensagem(ns) a revogar (ver tarefas/t05):
+        // 1) PRIMÁRIO: vínculo do Chatwoot (`chatwootMessageId = body.id`). Cobre múltiplos anexos
+        //    (várias linhas com o mesmo `chatwootMessageId`). Prefere a mesma conversa para não
+        //    revogar a mensagem errada quando o vínculo está contaminado (T02 / issue #302).
+        // 2) FALLBACK: id nativo do WhatsApp via `source_id` ("WAID:<stanzaId>"), quando o vínculo
+        //    do Chatwoot não foi gravado (incoming / import DB).
+        const waId =
+          typeof body.source_id === 'string' && body.source_id.startsWith('WAID:')
+            ? body.source_id.slice('WAID:'.length)
+            : null;
 
-          await waInstance?.client.sendMessage(key.remoteJid, { delete: key });
+        let candidates: MessageModel[] = [];
 
-          await this.prismaRepository.message.deleteMany({
-            where: {
-              instanceId: instance.instanceId,
-              chatwootMessageId: body.id,
-            },
+        const baseWhere = { chatwootMessageId: body.id, instanceId: instance.instanceId };
+
+        if (body.conversation?.id) {
+          candidates = await this.prismaRepository.message.findMany({
+            where: { ...baseWhere, chatwootConversationId: body.conversation.id },
+            orderBy: { messageTimestamp: 'desc' },
           });
         }
+
+        if (candidates.length === 0) {
+          candidates = await this.prismaRepository.message.findMany({
+            where: baseWhere,
+            orderBy: { messageTimestamp: 'desc' },
+          });
+        }
+
+        if (candidates.length === 0 && waId) {
+          candidates = await this.prismaRepository.message.findMany({
+            where: { instanceId: instance.instanceId, key: { path: ['id'], equals: waId } },
+            orderBy: { messageTimestamp: 'desc' },
+          });
+        }
+
+        if (candidates.length === 0) {
+          this.logger.warn(
+            `[CW.DELETE] Mensagem não encontrada para revogar. chatwootMessageId=${body.id} source_id=${body.source_id ?? 'null'}`,
+          );
+          return { message: 'bot' };
+        }
+
+        for (const candidate of candidates) {
+          const key = candidate.key as WAMessageKey;
+
+          if (!key?.fromMe) {
+            // O WhatsApp não permite "apagar para todos" uma mensagem que não foi enviada pela instância.
+            this.logger.warn(`[CW.DELETE] Mensagem incoming não pode ser revogada para o cliente. keyId=${key?.id}`);
+            continue;
+          }
+
+          try {
+            await waInstance?.client.sendMessage(key.remoteJid, { delete: key });
+
+            // Remove apenas a linha revogada com sucesso; em falha, permanece para nova tentativa.
+            await this.prismaRepository.message.deleteMany({
+              where: { id: candidate.id, instanceId: instance.instanceId },
+            });
+          } catch (error) {
+            this.logger.error(`[CW.DELETE] Falha ao revogar mensagem no WhatsApp. keyId=${key?.id} error=${error}`);
+          }
+        }
+
         return { message: 'bot' };
       }
 
@@ -1462,7 +1519,11 @@ export class ChatwootService {
       }
 
       if (body.message_type === 'outgoing' && body?.conversation?.messages?.length && chatId !== '123456') {
-        if (body?.conversation?.messages[0]?.source_id?.substring(0, 5) === 'WAID:') {
+        // Echo do WhatsApp: mensagens espelhadas pela Evolution chegam com `source_id = "WAID:<id>"`.
+        // Checa o `source_id` da PRÓPRIA mensagem do evento (`body.source_id`) — e não a última
+        // mensagem da conversa (`messages[0]`, que pode ser outra). Isso evita tanto o descarte
+        // indevido de um envio real quanto o reenvio duplicado de um echo (ver T05/A2).
+        if (body?.source_id?.substring(0, 5) === 'WAID:') {
           return { message: 'bot' };
         }
 
@@ -1560,7 +1621,9 @@ export class ChatwootService {
         }
 
         const chatwootRead = this.configService.get<Chatwoot>('CHATWOOT').MESSAGE_READ;
-        if (chatwootRead) {
+        // instanceId: sem ele o filtro seria omitido e a busca pegaria mensagem de outra instância
+        // (só possível quando a instância não está em memória — ver T05/A12).
+        if (chatwootRead && instance.instanceId) {
           const lastMessage = await this.prismaRepository.message.findFirst({
             where: {
               key: {
@@ -1569,6 +1632,7 @@ export class ChatwootService {
               },
               instanceId: instance.instanceId,
             },
+            orderBy: { messageTimestamp: 'desc' },
           });
           if (lastMessage && !lastMessage.chatwootIsRead) {
             const key = lastMessage.key as WAMessageKey;
@@ -1634,20 +1698,33 @@ export class ChatwootService {
       return;
     }
 
-    // Use raw SQL to avoid JSON path issues
-    const result = await this.prismaRepository.$executeRaw`
-      UPDATE "Message" 
-      SET 
-        "chatwootMessageId" = ${chatwootMessageIds.messageId},
-        "chatwootConversationId" = ${chatwootMessageIds.conversationId},
-        "chatwootInboxId" = ${chatwootMessageIds.inboxId},
-        "chatwootContactInboxSourceId" = ${chatwootMessageIds.contactInboxSourceId},
-        "chatwootIsRead" = ${chatwootMessageIds.isRead || false}
-      WHERE "instanceId" = ${instance.instanceId} 
-      AND "key"->>'id' = ${key.id}
-    `;
+    // Defensivo: sem instanceId, o filtro JSON do Prisma seria OMITIDO (atualizaria linhas de
+    // outras instâncias), diferente do SQL raw antigo que lançava. Nunca deve ocorrer no fluxo
+    // normal (instanceId é setado em processWebhook), mas evita um UPDATE em massa (ver T05/A1).
+    if (!instance.instanceId) {
+      this.logger.warn('updateChatwootMessageId skipped: instanceId is undefined');
+      return;
+    }
 
-    this.logger.verbose(`Update result: ${result} rows affected`);
+    // Filtro JSON do Prisma (agnóstico de provider: Postgres e MySQL).
+    // Substitui o SQL raw Postgres-only (`"key"->>'id'`), que lançava exceção em MySQL e impedia
+    // a gravação do vínculo `chatwootMessageId` — usado depois para revogar a mensagem no
+    // WhatsApp quando o agente apaga no Chatwoot (ver tarefas/t05).
+    const result = await this.prismaRepository.message.updateMany({
+      where: {
+        instanceId: instance.instanceId,
+        key: { path: ['id'], equals: key.id },
+      },
+      data: {
+        chatwootMessageId: chatwootMessageIds.messageId,
+        chatwootConversationId: chatwootMessageIds.conversationId,
+        chatwootInboxId: chatwootMessageIds.inboxId,
+        chatwootContactInboxSourceId: chatwootMessageIds.contactInboxSourceId,
+        chatwootIsRead: chatwootMessageIds.isRead || false,
+      },
+    });
+
+    this.logger.verbose(`Update result: ${result.count} rows affected`);
 
     if (this.isImportHistoryAvailable()) {
       try {
@@ -1659,15 +1736,14 @@ export class ChatwootService {
   }
 
   private async getMessageByKeyId(instance: InstanceDto, keyId: string): Promise<MessageModel> {
-    // Use raw SQL query to avoid JSON path issues with Prisma
-    const messages = await this.prismaRepository.$queryRaw`
-      SELECT * FROM "Message" 
-      WHERE "instanceId" = ${instance.instanceId} 
-      AND "key"->>'id' = ${keyId}
-      LIMIT 1
-    `;
-
-    return (messages as MessageModel[])[0] || null;
+    // Filtro JSON do Prisma (agnóstico de provider). Antes era SQL raw Postgres-only
+    // (`"key"->>'id'`), que quebrava em MySQL nos fluxos de edit/read/delete (ver tarefas/t05).
+    return this.prismaRepository.message.findFirst({
+      where: {
+        instanceId: instance.instanceId,
+        key: { path: ['id'], equals: keyId },
+      },
+    });
   }
 
   private async getReplyToIds(

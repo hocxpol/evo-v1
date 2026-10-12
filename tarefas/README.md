@@ -12,6 +12,7 @@ Registro das correções/ajustes aplicados neste fork da Evolution API, organiza
 | **T02** | Chatwoot: resposta cita a mensagem errada (de outra conversa) | Concluída | [t02/README.md](./t02/README.md) |
 | **T03** | Chatwoot: mensagem marcada como falha (vermelha) mesmo tendo sido enviada | Concluída | [t03/README.md](./t03/README.md) |
 | **T04** | Chatwoot: `chatwootConversationId`/`chatwootInboxId` errados nos canais Meta e Evolution | Concluída | [t04/README.md](./t04/README.md) |
+| **T05** | Chatwoot: apagar mensagem do atendente não reflete no WhatsApp do cliente | Concluída | [t05/README.md](./t05/README.md) |
 
 ## Auditoria
 
@@ -23,13 +24,13 @@ Registro das correções/ajustes aplicados neste fork da Evolution API, organiza
 
 | Arquivo | Tarefas |
 |---|---|
-| `src/api/integrations/chatbot/chatwoot/services/chatwoot.service.ts` | T02, T03 |
+| `src/api/integrations/chatbot/chatwoot/services/chatwoot.service.ts` | T02, T03, T05 |
 | `src/api/integrations/channel/evolution/evolution.channel.service.ts` | T04 |
 | `src/api/integrations/channel/meta/whatsapp.business.service.ts` | T04 |
 
 ## Contexto comum
 
-T02, T03 e T04 são correções da integração **Chatwoot ↔ Evolution API**. Referências upstream relevantes:
+T02, T03, T04 e T05 são correções da integração **Chatwoot ↔ Evolution API**. Referências upstream relevantes:
 
 - [evolution-foundation/evolution-api#2014](https://github.com/evolution-foundation/evolution-api/issues/2014) — meta-issue Chatwoot
 - [evolution-foundation/evolution-api#491](https://github.com/evolution-foundation/evolution-api/issues/491) — resposta referencia mensagem errada
