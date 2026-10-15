@@ -81,6 +81,7 @@ import { Boom } from '@hapi/boom';
 import { createId as cuid } from '@paralleldrive/cuid2';
 import { Instance, Message } from '@prisma/client';
 import { createJid } from '@utils/createJid';
+import { decryptMessageEdit } from '@utils/secretEdit';
 import { fetchLatestWaWebVersion } from '@utils/fetchLatestWaWebVersion';
 import { makeProxyAgent, makeProxyAgentUndici } from '@utils/makeProxyAgent';
 import { getOnWhatsappCache, saveOnWhatsappCache } from '@utils/onWhatsappCache';
@@ -550,6 +551,228 @@ export class BaileysStartupService extends ChannelStartupService {
       return webMessageInfo[0].message;
     } catch {
       return { conversation: '' };
+    }
+  }
+
+  // Persists a message edit that arrived via `messages.update` (Baileys v7 shape:
+  // `update.message.editedMessage.message`). Provider-agnostic (Prisma) — unlike
+  // `getMessage()`, which uses Postgres-only raw SQL. See T06/edits.
+  private async persistIncomingEdit(key: WAMessageKey, editedNewMessage: any) {
+    const saveData = this.configService.get<Database>('DATABASE').SAVE_DATA;
+    if (!saveData.NEW_MESSAGE || !key?.id) return;
+
+    const stored: any = await this.prismaRepository.message.findFirst({
+      where: { instanceId: this.instanceId, key: { path: ['id'], equals: key.id } },
+    });
+    if (!stored) {
+      this.logger.warn(`[CW.EDIT] Mensagem não encontrada para persistir a edição. keyId=${key.id}`);
+      return;
+    }
+
+    const message: any = (stored.message as any) ?? {};
+    const messageType = stored.messageType;
+    const newText =
+      editedNewMessage?.conversation ??
+      editedNewMessage?.extendedTextMessage?.text ??
+      editedNewMessage?.imageMessage?.caption ??
+      editedNewMessage?.videoMessage?.caption ??
+      editedNewMessage?.documentMessage?.caption ??
+      null;
+
+    if (newText !== null) {
+      if (messageType === 'conversation' || messageType === 'extendedTextMessage') {
+        message.conversation = newText;
+      } else if (message[messageType]) {
+        message[messageType].caption = newText;
+      } else {
+        message.conversation = newText;
+      }
+    } else {
+      Object.assign(message, editedNewMessage);
+    }
+
+    await this.prismaRepository.message.update({
+      where: { id: stored.id },
+      data: {
+        message,
+        status: 'EDITED',
+        messageTimestamp: Math.floor(Date.now() / 1000),
+      },
+    });
+
+    if (saveData.MESSAGE_UPDATE) {
+      const storedKey = (stored.key as WAMessageKey) ?? key;
+      const remoteJid = storedKey?.remoteJid ?? key?.remoteJid;
+      if (remoteJid) {
+        await this.prismaRepository.messageUpdate.create({
+          data: {
+            messageId: stored.id,
+            keyId: key.id,
+            remoteJid,
+            fromMe: storedKey?.fromMe ?? key?.fromMe ?? false,
+            participant: storedKey?.participant ?? key?.participant ?? null,
+            status: 'EDITED',
+            instanceId: this.instanceId,
+          },
+        });
+      }
+    }
+  }
+
+  // Extracts the edited text from an IMessage (Baileys edit payload).
+  private extractEditedContent(imessage: any): string {
+    return (
+      imessage?.conversation ??
+      imessage?.extendedTextMessage?.text ??
+      imessage?.imageMessage?.caption ??
+      imessage?.videoMessage?.caption ??
+      imessage?.documentMessage?.caption ??
+      ''
+    )
+      .toString()
+      .trim();
+  }
+
+  // Ensures an edit is forwarded to the Chatwoot bridge only ONCE, even though
+  // Baileys emits BOTH `messages.upsert` and `messages.update` for the same edit
+  // (see chats.ts #upsertMessage). Keyed by WhatsApp message id + content.
+  private async reserveEditForward(waKeyId: string, content: string): Promise<boolean> {
+    if (!waKeyId) return false;
+    const key = `cw_edit_fwd:${this.instanceId}:${waKeyId}:${content}`;
+    if (await this.baileysCache.get(key)) return false;
+    await this.baileysCache.set(key, 1, 120);
+    return true;
+  }
+
+  // WhatsApp seals message edits inside a `secretEncryptedMessage` envelope
+  // (secretEncType MESSAGE_EDIT), encrypted with the ORIGINAL message's
+  // `messageContextInfo.messageSecret`. Baileys 7.0.0-rc.9 does not decrypt it, so
+  // we decrypt here and rewrite `received.message` to the plaintext `protocolMessage`
+  // MESSAGE_EDIT shape the edit pipeline already understands. Mirrors Baileys PR #2690
+  // / whatsmeow. See T06/edits.
+  private async unwrapSecretEdit(received: any): Promise<void> {
+    try {
+      const content = received?.message;
+      const secretEnc = content?.secretEncryptedMessage ?? content?.editedMessage?.message?.secretEncryptedMessage;
+      if (!secretEnc?.encPayload || !secretEnc?.encIv) return;
+      if (Number(secretEnc.secretEncType) !== proto.Message.SecretEncryptedMessage.SecretEncType.MESSAGE_EDIT) return;
+
+      const targetKey = secretEnc.targetMessageKey;
+      if (!targetKey?.id) return;
+
+      this.logger.verbose(
+        `[CW.EDIT] secret edit detectado. keyId=${targetKey.id} fromMe=${received.key?.fromMe} ` +
+          `remoteJid=${received.key?.remoteJid} remoteJidAlt=${received.key?.remoteJidAlt} ` +
+          `participant=${received.key?.participant} participantAlt=${received.key?.participantAlt}`,
+      );
+
+      const row: any = await this.prismaRepository.message.findFirst({
+        where: { instanceId: this.instanceId, key: { path: ['id'], equals: targetKey.id } },
+      });
+      if (!row) {
+        this.logger.warn(`[CW.EDIT] secret edit: original não encontrada. keyId=${targetKey.id}`);
+        return;
+      }
+
+      // Normalise the stored messageSecret — same shapes handled by the poll flow
+      // (string/base64, BufferJSON, Buffer/Uint8Array/array).
+      let msgEncKey: any = row?.message?.messageContextInfo?.messageSecret;
+      if (typeof msgEncKey === 'string') {
+        msgEncKey = Buffer.from(msgEncKey, 'base64');
+      } else if (msgEncKey?.type === 'Buffer' && Array.isArray(msgEncKey.data)) {
+        msgEncKey = Buffer.from(msgEncKey.data);
+      } else if (Array.isArray(msgEncKey)) {
+        msgEncKey = Buffer.from(msgEncKey);
+      } else if (msgEncKey && !Buffer.isBuffer(msgEncKey) && typeof msgEncKey === 'object') {
+        const values = Object.values(msgEncKey);
+        if (values.length && values.every((value) => typeof value === 'number')) {
+          msgEncKey = Buffer.from(values as number[]);
+        }
+      }
+      if (Buffer.isBuffer(msgEncKey) && msgEncKey.length === 44) {
+        // JSON-backed stores sometimes keep the secret as base64 text (44 chars)
+        msgEncKey = Buffer.from(msgEncKey.toString('utf8'), 'base64');
+      }
+      if (!msgEncKey?.length) {
+        const mci = row.message?.messageContextInfo;
+        this.logger.warn(
+          `[CW.EDIT] secret edit: messageSecret ausente. keyId=${targetKey.id} fromMe=${received.key?.fromMe} ` +
+            `rowFromMe=${(row.key as WAMessageKey)?.fromMe} hasMessageContextInfo=${!!mci} ` +
+            `messageContextInfoKeys=[${Object.keys(mci ?? {}).join(', ')}] messageType=${row.messageType}`,
+        );
+        return;
+      }
+
+      // The key is derived with the AUTHOR/editor identity, which may be our PN or
+      // LID (for our own edits) or the participant JID (for contact edits). Try every
+      // plausible identity — GCM authentication rejects the wrong ones.
+      const storedKey = (row.key as WAMessageKey) ?? ({} as WAMessageKey);
+      const candidates = (
+        [
+          // self identities (fromMe edits)
+          this.instance.wuid,
+          this.client?.user?.id,
+          this.client?.user?.lid,
+          // envelope identities
+          received.key?.participant,
+          received.key?.participantAlt,
+          received.key?.remoteJid,
+          received.key?.remoteJidAlt,
+          // original (target) identities
+          targetKey.remoteJid,
+          targetKey.participant,
+          (targetKey as any).participantAlt,
+          // stored original identities
+          storedKey.remoteJid,
+          storedKey.participant,
+          (storedKey as any).participantAlt,
+        ] as (string | undefined)[]
+      )
+        .filter((jid): jid is string => typeof jid === 'string' && jid.includes('@'))
+        .map((jid) => jidNormalizedUser(jid))
+        .filter((jid, i, arr) => arr.indexOf(jid) === i);
+
+      let decoded: any;
+      let usedJid: string | undefined;
+      let lastError: unknown;
+      // whatsmeow pairs the ORIGINAL author with the EDIT sender as separate identities
+      // (its "orig sender hack" for the LID/PN migration). Try the identical pair first
+      // (the common case) and then the cross product, since the envelope and the stored
+      // original may speak different JID forms. GCM auth rejects every wrong attempt.
+      const attempts: [string, string][] = [
+        ...candidates.map((jid) => [jid, jid] as [string, string]),
+        ...candidates.flatMap((a) => candidates.filter((b) => b !== a).map((b) => [a, b] as [string, string])),
+      ];
+      for (const [origJid, editorJid] of attempts) {
+        try {
+          decoded = decryptMessageEdit(secretEnc, targetKey.id, origJid, editorJid, msgEncKey as Buffer);
+          usedJid = origJid;
+          break;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      if (!decoded) {
+        this.logger.warn(
+          `[CW.EDIT] secret edit: nenhuma identidade decifrou. keyId=${targetKey.id} fromMe=${received.key?.fromMe} candidates=[${candidates.join(', ')}]`,
+        );
+        throw lastError ?? new Error('secret edit: no candidate key matched');
+      }
+
+      if (!decoded.protocolMessage) {
+        decoded = {
+          protocolMessage: {
+            key: targetKey,
+            type: proto.Message.ProtocolMessage.Type.MESSAGE_EDIT,
+            editedMessage: decoded,
+          },
+        };
+      }
+
+      received.message = decoded;
+      this.logger.verbose(`[CW.EDIT] secret edit decifrado. keyId=${targetKey.id} author=${usedJid}`);
+    } catch (error) {
+      this.logger.warn(`[CW.EDIT] secret edit: falha ao decifrar. keyId=${received?.message?.secretEncryptedMessage?.targetMessageKey?.id} error=${error}`);
     }
   }
 
@@ -1102,6 +1325,11 @@ export class BaileysStartupService extends ChannelStartupService {
             this.logger.warn(`Message ignored with messageStubParameters: ${JSON.stringify(received, null, 2)}`);
             continue;
           }
+
+          // WhatsApp currently seals edits in a `secretEncryptedMessage` envelope; decrypt
+          // and rewrite to the plaintext edit shape before the edit pipeline reads it.
+          await this.unwrapSecretEdit(received);
+
           if (received.message?.conversation || received.message?.extendedTextMessage?.text) {
             const text = received.message?.conversation || received.message?.extendedTextMessage?.text;
 
@@ -1119,47 +1347,30 @@ export class BaileysStartupService extends ChannelStartupService {
             }
           }
 
+          // Edit detection. Baileys emits the SAME edit as both `messages.upsert`
+          // (here) and `messages.update` (process-message.ts). We handle it here as a
+          // fallback so coverage is guaranteed; `reserveEditForward` dedups, so only
+          // ONE of the two paths forwards/persists (no double PATCH/DB/webhook).
           const editedMessage =
             received?.message?.protocolMessage || received?.message?.editedMessage?.message?.protocolMessage;
 
-          if (editedMessage) {
-            if (this.configService.get<Chatwoot>('CHATWOOT').ENABLED && this.localChatwoot?.enabled)
-              this.chatwootService.eventWhatsapp(
-                'messages.edit',
-                { instanceName: this.instance.name, instanceId: this.instance.id },
-                editedMessage,
+          if (editedMessage?.editedMessage) {
+            const legacyContent = this.extractEditedContent(editedMessage.editedMessage);
+            if (await this.reserveEditForward(editedMessage.key?.id, legacyContent)) {
+              this.logger.info(
+                `[CW.EDIT] edit (messages.upsert) keyId=${editedMessage.key?.id} content=${JSON.stringify(legacyContent)}`,
               );
-
-            await this.sendDataWebhook(Events.MESSAGES_EDITED, editedMessage);
-
-            if (received.key?.id && editedMessage.key?.id) {
-              await this.baileysCache.set(`protocol_${received.key.id}`, editedMessage.key.id, 60 * 60 * 24);
-            }
-
-            const oldMessage = await this.getMessage(editedMessage.key, true);
-            if ((oldMessage as any)?.id) {
-              const editedMessageTimestamp = Long.isLong(received?.messageTimestamp)
-                ? Math.floor(received?.messageTimestamp.toNumber())
-                : Math.floor(received?.messageTimestamp as number);
-
-              await this.prismaRepository.message.update({
-                where: { id: (oldMessage as any).id },
-                data: {
-                  message: editedMessage.editedMessage as any,
-                  messageTimestamp: editedMessageTimestamp,
-                  status: 'EDITED',
-                },
-              });
-              await this.prismaRepository.messageUpdate.create({
-                data: {
-                  fromMe: editedMessage.key.fromMe,
-                  keyId: editedMessage.key.id,
-                  remoteJid: editedMessage.key.remoteJid,
-                  status: 'EDITED',
-                  instanceId: this.instanceId,
-                  messageId: (oldMessage as any).id,
-                },
-              });
+              if (this.configService.get<Chatwoot>('CHATWOOT').ENABLED && this.localChatwoot?.enabled) {
+                void this.chatwootService
+                  .eventWhatsapp(
+                    'messages.edit',
+                    { instanceName: this.instance.name, instanceId: this.instance.id },
+                    editedMessage,
+                  )
+                  .catch((error) => this.logger.error(`[CW.EDIT] falha ao encaminhar edição (upsert): ${error}`));
+              }
+              await this.persistIncomingEdit(editedMessage.key as WAMessageKey, editedMessage.editedMessage);
+              this.sendDataWebhook(Events.MESSAGES_EDITED, editedMessage);
             }
           }
 
@@ -1624,10 +1835,36 @@ export class BaileysStartupService extends ChannelStartupService {
             message.message = update.message;
           }
 
+          // Baileys v7 delivers message edits through `messages.update`
+          // (update.message = { editedMessage: { message: <IMessage> } }). Forward to the
+          // Chatwoot bridge and persist locally, then skip the status/raw-SQL path below.
+          const editedNewMessage = (update.message as any)?.editedMessage?.message;
+          if (editedNewMessage) {
+            const editedContent = this.extractEditedContent(editedNewMessage);
+            if (await this.reserveEditForward(key.id, editedContent)) {
+              this.logger.info(
+                `[CW.EDIT] edit (messages.update) keyId=${key.id} content=${JSON.stringify(editedContent)}`,
+              );
+              if (this.configService.get<Chatwoot>('CHATWOOT').ENABLED && this.localChatwoot?.enabled) {
+                void this.chatwootService
+                  .eventWhatsapp(
+                    'messages.edit',
+                    { instanceName: this.instance.name, instanceId: this.instanceId },
+                    { key, editedMessage: editedNewMessage },
+                  )
+                  .catch((error) => this.logger.error(`[CW.EDIT] falha ao encaminhar edição (update): ${error}`));
+              }
+              await this.persistIncomingEdit(key, editedNewMessage);
+              this.sendDataWebhook(Events.MESSAGES_EDITED, { key, editedMessage: editedNewMessage });
+            }
+            // Emit `messages.update` once for compat, regardless of which trigger won.
+            this.sendDataWebhook(Events.MESSAGES_UPDATE, message);
+            continue;
+          }
+
           let findMessage: any;
           const configDatabaseData = this.configService.get<Database>('DATABASE').SAVE_DATA;
           if (configDatabaseData.HISTORIC || configDatabaseData.NEW_MESSAGE) {
-            // Use raw SQL to avoid JSON path issues
             const protocolMapKey = `protocol_${key.id}`;
             const originalMessageId = (await this.baileysCache.get(protocolMapKey)) as string;
 
@@ -1637,13 +1874,12 @@ export class BaileysStartupService extends ChannelStartupService {
 
             const searchId = originalMessageId || key.id;
 
-            const messages = (await this.prismaRepository.$queryRaw`
-              SELECT * FROM "Message"
-              WHERE "instanceId" = ${this.instanceId}
-              AND "key"->>'id' = ${searchId}
-              LIMIT 1
-            `) as any[];
-            findMessage = messages[0] || null;
+            // Provider-agnostic lookup (Postgres and MySQL) via Prisma JSON filter —
+            // replaces the previous Postgres-only raw SQL (`"key"->>'id'`) that broke
+            // the whole `messages.update` handler on MySQL. See T06/B3.
+            findMessage = await this.prismaRepository.message.findFirst({
+              where: { instanceId: this.instanceId, key: { path: ['id'], equals: searchId } },
+            });
 
             if (!findMessage?.id) {
               this.logger.warn(`Original message not found for update. Skipping. Key: ${JSON.stringify(key)}`);

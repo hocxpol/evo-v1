@@ -47,6 +47,37 @@ export class ChatwootService {
   // Lock polling delay
   private readonly LOCK_POLLING_DELAY_MS = 300; // Delay between lock status checks
 
+  // Per-inbox feature flag required by the Chatwoot "Glorium.Chat" fork so that
+  // message edits are accepted for this (Evolution) inbox. See T06/A1.
+  private readonly EVOLUTION_INBOX_FEATURE = 'evolution_api';
+
+  // In-process fallback for the echo/reflection anti-loop guards. Used when the
+  // cache engine is unavailable (no Redis/local) and to survive cache TTL misses.
+  // Keyed by `self|reflect:<instanceId>:<chatwootMessageId>`.
+  private readonly editMarkers = new Map<string, { content: string; expiresAt: number }>();
+
+  private setEditMarker(key: string, content: string, ttlMs: number): void {
+    if (this.editMarkers.size > 1000) {
+      const now = Date.now();
+      for (const [k, v] of this.editMarkers) if (v.expiresAt <= now) this.editMarkers.delete(k);
+    }
+    this.editMarkers.set(key, { content, expiresAt: Date.now() + ttlMs });
+  }
+
+  private getEditMarker(key: string): string | undefined {
+    const entry = this.editMarkers.get(key);
+    if (!entry) return undefined;
+    if (entry.expiresAt <= Date.now()) {
+      this.editMarkers.delete(key);
+      return undefined;
+    }
+    return entry.content;
+  }
+
+  private clearEditMarker(key: string): void {
+    this.editMarkers.delete(key);
+  }
+
   private provider: any;
 
   constructor(
@@ -212,7 +243,8 @@ export class ChatwootService {
         data: {
           name: inboxName,
           channel: data as any,
-        },
+          glorium_features: [this.EVOLUTION_INBOX_FEATURE],
+        } as any,
       });
 
       if (!inbox) {
@@ -222,7 +254,7 @@ export class ChatwootService {
 
       inboxId = inbox.id;
     } else {
-      const inbox = findInbox.payload.find((inbox) => inbox.name === inboxName);
+      const inbox: any = findInbox.payload.find((inbox) => inbox.name === inboxName);
 
       if (!inbox) {
         this.logger.warn('inbox not found');
@@ -230,6 +262,21 @@ export class ChatwootService {
       }
 
       inboxId = inbox.id;
+
+      // Existing inboxes may predate this change — ensure the flag without dropping others.
+      const currentFeatures: string[] = Array.isArray(inbox.glorium_features) ? inbox.glorium_features : [];
+      if (!currentFeatures.includes(this.EVOLUTION_INBOX_FEATURE)) {
+        try {
+          await client.inboxes.update({
+            accountId: this.provider.accountId,
+            id: inboxId,
+            data: { glorium_features: [...currentFeatures, this.EVOLUTION_INBOX_FEATURE] } as any,
+          });
+          this.logger.log(`Inbox ${inboxId} updated with '${this.EVOLUTION_INBOX_FEATURE}'`);
+        } catch (error) {
+          this.logger.warn(`Could not set '${this.EVOLUTION_INBOX_FEATURE}' on inbox ${inboxId}: ${error}`);
+        }
+      }
     }
     this.logger.log(`Inbox created - inboxId: ${inboxId}`);
 
@@ -1345,6 +1392,94 @@ export class ChatwootService {
         this.cache.delete(keyToDelete);
       }
 
+      // Chatwoot → WhatsApp: the agent edited a text message. Only real content
+      // edits (`previous_changes.content`) on outgoing messages are propagated.
+      // Status/other updates are ignored (they have no `previous_changes.content`).
+      if (
+        body.event === 'message_updated' &&
+        body.message_type === 'outgoing' &&
+        !body.content_attributes?.deleted &&
+        body.previous_changes?.content
+      ) {
+        const waInstance = this.waMonitor.waInstances[instance.instanceName];
+        instance.instanceId = waInstance?.instanceId;
+
+        if (!waInstance || !instance.instanceId) {
+          this.logger.warn(`[CW.EDIT] Instância não encontrada/em memória; nada a editar. instance=${instance.instanceName}`);
+          return { message: 'bot' };
+        }
+
+        // Skip message_updated events that are the reflection of a WhatsApp edit we
+        // just wrote into Chatwoot (inbound branch) — avoids a redundant WhatsApp edit
+        // and a duplicated signature (T06/A3). Cache first, in-process fallback second.
+        const reflectedContent = (body.previous_changes?.content as string[] | undefined)?.[1];
+        const reflectMarkerKey = `reflect:${instance.instanceId}:${body.id}`;
+        const pendingReflection =
+          (await this.cache.get(`cw_edit_reflect_${body.id}`)) ?? this.getEditMarker(reflectMarkerKey);
+        if (pendingReflection && pendingReflection === reflectedContent) {
+          await this.cache.delete(`cw_edit_reflect_${body.id}`);
+          this.clearEditMarker(reflectMarkerKey);
+          return { message: 'bot' };
+        }
+
+        // Resolve a mensagem enviada (mesma resolução em camadas do delete/T05).
+        const baseWhere = { chatwootMessageId: body.id, instanceId: instance.instanceId };
+        let candidates: MessageModel[] = [];
+
+        if (body.conversation?.id) {
+          candidates = await this.prismaRepository.message.findMany({
+            where: { ...baseWhere, chatwootConversationId: body.conversation.id },
+            orderBy: { messageTimestamp: 'desc' },
+          });
+        }
+
+        if (candidates.length === 0) {
+          candidates = await this.prismaRepository.message.findMany({
+            where: baseWhere,
+            orderBy: { messageTimestamp: 'desc' },
+          });
+        }
+
+        const editedMessage = candidates.find((candidate) => (candidate.key as WAMessageKey)?.fromMe);
+
+        if (!editedMessage) {
+          this.logger.warn(`[CW.EDIT] Mensagem não encontrada para editar. chatwootMessageId=${body.id}`);
+          return { message: 'bot' };
+        }
+
+        const key = editedMessage.key as WAMessageKey;
+
+        const messageReceived = body.content
+          ? this.normalizeChatwootText(body.content)
+              .replaceAll(/(?<!\*)\*((?!\s)([^\n*]+?)(?<!\s))\*(?!\*)/g, '_$1_') // Substitui * por _
+              .replaceAll(/\*{2}((?!\s)([^\n*]+?)(?<!\s))\*{2}/g, '*$1*') // Substitui ** por *
+              .replaceAll(/~{2}((?!\s)([^\n*]+?)(?<!\s))~{2}/g, '~$1~') // Substitui ~~ por ~
+              .replaceAll(/(?<!`)`((?!\s)([^`*]+?)(?<!\s))`(?!`)/g, '```$1```') // Substitui ` por ```
+          : body.content;
+
+        const senderName = body?.conversation?.messages[0]?.sender?.available_name || body?.sender?.name;
+        const formattedDelimiter =
+          (this.provider.signDelimiter && this.normalizeChatwootText(this.provider.signDelimiter)) || '\n';
+        const textToConcat = this.provider.signMsg ? [`*${senderName}:*`] : [];
+        textToConcat.push(messageReceived);
+        const formatText = senderName === null || senderName === undefined ? messageReceived : textToConcat.join(formattedDelimiter);
+
+        try {
+          // Keep the "echo by content" marker (cw_edit_<body.id>) used by the inbound guard.
+          await this.cache.set(`cw_edit_${body.id}`, formatText, 300);
+          this.setEditMarker(`self:${instance.instanceId}:${body.id}`, formatText, 300000);
+          await waInstance.client.sendMessage(key.remoteJid, { text: formatText, edit: key } as any);
+          // Persist the edit locally via Prisma (provider-agnostic). Delegating to
+          // `updateMessage` was rejected because it depends on `getMessage()`
+          // (Postgres-only raw SQL), which broke edits on MySQL (T06/A5).
+          await this.persistOutboundEdit(instance.instanceId, editedMessage, formatText);
+        } catch (error) {
+          this.logger.error(`[CW.EDIT] Falha ao editar mensagem no WhatsApp. keyId=${key?.id} error=${error}`);
+        }
+
+        return { message: 'bot' };
+      }
+
       if (
         !body?.conversation ||
         body.private ||
@@ -1732,6 +1867,96 @@ export class ChatwootService {
       } catch (error) {
         this.logger.error(`Error updating Chatwoot message source ID: ${error}`);
       }
+    }
+  }
+
+  // Persists a Chatwoot-originated edit locally (provider-agnostic, via Prisma).
+  // Mirrors `WhatsappBaileysService#updateMessage`'s persistence, but WITHOUT its
+  // dependency on `getMessage()` (raw Postgres-only SQL) — which silently broke
+  // edits on MySQL (see T06/A5).
+  private async persistOutboundEdit(instanceId: string | undefined, storedMessage: MessageModel, text: string) {
+    const saveData = this.configService.get<Database>('DATABASE').SAVE_DATA;
+    if (!instanceId || !saveData.NEW_MESSAGE || !storedMessage?.id) return;
+
+    const key = storedMessage.key as WAMessageKey;
+    const message: any = (storedMessage.message as any) ?? {};
+    const messageType = (storedMessage as any).messageType;
+
+    if (messageType === 'conversation' || messageType === 'extendedTextMessage') {
+      message.conversation = text;
+    } else if (message[messageType]) {
+      message[messageType].caption = text;
+    } else {
+      message.conversation = text;
+    }
+
+    await this.prismaRepository.message.update({
+      where: { id: storedMessage.id, instanceId },
+      data: {
+        message,
+        status: 'EDITED',
+        messageTimestamp: Math.floor(Date.now() / 1000),
+      },
+    });
+
+    if (saveData.MESSAGE_UPDATE) {
+      await this.prismaRepository.messageUpdate.create({
+        data: {
+          messageId: storedMessage.id,
+          keyId: key.id,
+          remoteJid: key.remoteJid,
+          fromMe: key.fromMe,
+          participant: key.participant,
+          status: 'EDITED',
+          instanceId,
+        },
+      });
+    }
+  }
+
+  // Recovers the Chatwoot conversation for a chat from a sibling message that already
+  // carries the link. Used when the edited message's own row has no `chatwootConversationId`
+  // so the WAID fallback has a conversation to search in.
+  private async getChatwootConversationIdByRemoteJid(
+    instance: InstanceDto,
+    remoteJid: string,
+  ): Promise<number | null> {
+    const sibling = await this.prismaRepository.message.findFirst({
+      where: {
+        instanceId: instance.instanceId,
+        chatwootConversationId: { not: null },
+        key: { path: ['remoteJid'], equals: remoteJid },
+      },
+      orderBy: { messageTimestamp: 'desc' },
+      select: { chatwootConversationId: true },
+    });
+
+    return sibling?.chatwootConversationId ?? null;
+  }
+
+  // Resolves the Chatwoot message for a WhatsApp edit using its `source_id`
+  // ("WAID:<keyId>"). Possible only when the conversation is known. Defensive about
+  // the list response shape. See T06 / WAID fallback.
+  private async resolveChatwootMessageByWaId(
+    waKeyId: string,
+    knownConversationId?: number | null,
+  ): Promise<{ conversationId?: number; messageId?: number } | null> {
+    if (!knownConversationId || !waKeyId) return null;
+    try {
+      const res: any = await chatwootRequest(this.getClientCwConfig(), {
+        method: 'GET',
+        url: `/api/v1/accounts/${this.provider.accountId}/conversations/${knownConversationId}/messages`,
+      });
+      const list: any[] = res?.payload ?? res?.data?.payload ?? (Array.isArray(res) ? res : []);
+      const sourceId = `WAID:${waKeyId}`;
+      const found = Array.isArray(list) ? list.find((message) => message?.source_id === sourceId) : null;
+      if (found?.id) {
+        return { conversationId: knownConversationId, messageId: found.id };
+      }
+      return null;
+    } catch (error) {
+      this.logger.warn(`[CW.EDIT] WAID fallback falhou: ${error}`);
+      return null;
     }
   }
 
@@ -2478,12 +2703,25 @@ export class ChatwootService {
       }
 
       if (event === 'messages.edit' || event === 'send.message.update') {
+        // `send.message.update` carries the same `protocolMessage` shape as
+        // `messages.edit`; both reflect a real edit and are handled the same.
+        if (!body?.key?.id) {
+          this.logger.warn('[CW.EDIT] event sem key.id — ignorando.');
+          return;
+        }
+
         const editedMessageContentRaw =
           body?.editedMessage?.conversation ??
           body?.editedMessage?.extendedTextMessage?.text ??
           body?.editedMessage?.imageMessage?.caption ??
           body?.editedMessage?.videoMessage?.caption ??
           body?.editedMessage?.documentMessage?.caption ??
+          // Baileys v7 raw shape: { editedMessage: { message: <IMessage> } }
+          body?.editedMessage?.message?.conversation ??
+          body?.editedMessage?.message?.extendedTextMessage?.text ??
+          body?.editedMessage?.message?.imageMessage?.caption ??
+          body?.editedMessage?.message?.videoMessage?.caption ??
+          body?.editedMessage?.message?.documentMessage?.caption ??
           (typeof body?.text === 'string' ? body.text : undefined);
 
         const editedMessageContent = (editedMessageContentRaw ?? '').trim();
@@ -2493,39 +2731,110 @@ export class ChatwootService {
           return;
         }
 
+        this.logger.info(
+          `[CW.EDIT] inbound ${event}: keyId=${body.key.id} content=${JSON.stringify(editedMessageContent)}`,
+        );
+
         const message = await this.getMessageByKeyId(instance, body?.key?.id);
 
-        if (!message) {
-          this.logger.warn('Message not found for edit event');
+        // Resolve the Chatwoot ids. Primary: the local link. Fallback: recover the
+        // conversation from a sibling message in the chat, then the message by its
+        // `source_id` ("WAID:<key.id>").
+        let chatwootConversationId: number | null = message?.chatwootConversationId ?? null;
+        let chatwootMessageId: number | null = message?.chatwootMessageId ?? null;
+
+        if (!chatwootConversationId && body?.key?.remoteJid) {
+          chatwootConversationId = await this.getChatwootConversationIdByRemoteJid(instance, body.key.remoteJid);
+        }
+
+        if (!chatwootMessageId && chatwootConversationId) {
+          const resolved = await this.resolveChatwootMessageByWaId(body.key.id, chatwootConversationId);
+          if (resolved?.messageId) {
+            chatwootMessageId = resolved.messageId;
+          }
+        }
+
+        if (!chatwootConversationId || !chatwootMessageId) {
+          this.logger.warn(
+            `[CW.EDIT] vínculo ausente: keyId=${body.key.id} sourceId=WAID:${body.key.id} ` +
+              `conversationId=${chatwootConversationId} messageId=${chatwootMessageId}`,
+          );
           return;
         }
 
-        const key = message.key as WAMessageKey;
+        this.logger.info(
+          `[CW.EDIT] resolved conversationId=${chatwootConversationId} messageId=${chatwootMessageId}`,
+        );
 
-        const messageType = key?.fromMe ? 'outgoing' : 'incoming';
+        // Drop the echo of our own Chatwoot-originated edit by comparing the text we
+        // sent (keyed by the Chatwoot message id) with the incoming edit. Uses the
+        // cache first and an in-process marker as fallback (cache may be disabled).
+        const selfMarkerKey = `self:${instance.instanceId}:${chatwootMessageId}`;
+        const sentText = ((await this.cache.get(`cw_edit_${chatwootMessageId}`)) ??
+          this.getEditMarker(selfMarkerKey)) as string | undefined;
+        if (sentText && sentText.trim() === editedMessageContent) {
+          await this.cache.delete(`cw_edit_${chatwootMessageId}`);
+          this.clearEditMarker(selfMarkerKey);
+          return;
+        }
 
-        if (message && message.chatwootConversationId && message.chatwootMessageId) {
-          // Criar nova mensagem com formato: "Mensagem editada:\n\nteste1"
+        // Mark the exact content we are about to write into Chatwoot. When this
+        // produces a `message_updated` webhook, the outbound branch recognises it as
+        // our own reflection and avoids re-sending the edit to WhatsApp (T06/A3).
+        await this.cache.set(`cw_edit_reflect_${chatwootMessageId}`, editedMessageContent, 60);
+        this.setEditMarker(`reflect:${instance.instanceId}:${chatwootMessageId}`, editedMessageContent, 60000);
+
+        // Update the original Chatwoot message in place (contact edit, or agent edit
+        // from the phone). The Chatwoot endpoint accepts integration-token calls for
+        // both incoming and outgoing messages.
+        let editApplied = false;
+        let editFallbackNeeded = false;
+        try {
+          await chatwootRequest(this.getClientCwConfig(), {
+            method: 'PATCH',
+            url: `/api/v1/accounts/${this.provider.accountId}/conversations/${chatwootConversationId}/messages/${chatwootMessageId}/edit`,
+            body: { content: editedMessageContent },
+          });
+          editApplied = true;
+          this.logger.info(
+            `[CW.EDIT] PATCH ok conversationId=${chatwootConversationId} messageId=${chatwootMessageId}`,
+          );
+        } catch (error) {
+          const status = (error as any)?.status ?? (error as any)?.response?.status;
+          const bodyError = (error as any)?.body?.error ?? (error as any)?.response?.data?.error;
+          // 422: feature `message_edit` OFF / inbox sem `evolution_api` / mensagem ineligível.
+          // 403: inbox não-API.
+          // 404: endpoint `/edit` ausente (Chatwoot sem o fork) ou ids conversa/mensagem errados.
+          // Nesses casos caímos no comportamento antigo (nota), para a edição nunca ser perdida (T06/B1).
+          // Exceção: 422 'Content is unchanged' é um no-op (não gera nota nem erro).
+          // Outros (5xx/timeout) são transitórios: apenas logam, sem nota (T06/A2).
+          if (status === 422 && bodyError === 'Content is unchanged') {
+            this.logger.info('[CW.EDIT] Conteúdo igual ao atual no Chatwoot — no-op.');
+          } else if (status === 422 || status === 403 || status === 404) {
+            editFallbackNeeded = true;
+            this.logger.warn(`[CW.EDIT] Edição in-place indisponível (status ${status}); usando nota 'Mensagem editada'.`);
+          } else {
+            this.logger.error(`[CW.EDIT] Falha ao atualizar a mensagem no Chatwoot. status=${status} error=${error}`);
+          }
+        }
+
+        if (!editApplied && editFallbackNeeded) {
+          const key = message.key as WAMessageKey;
+          const messageType = key?.fromMe ? 'outgoing' : 'incoming';
           const editedText = `\n\n\`${i18next.t('cw.message.edited')}:\`\n\n${editedMessageContent}`;
-
-          const send = await this.createMessage(
+          await this.createMessage(
             instance,
-            message.chatwootConversationId,
+            chatwootConversationId,
             editedText,
             messageType,
             false,
             [],
-            {
-              message: { extendedTextMessage: { contextInfo: { stanzaId: key.id } } },
-            },
-            'WAID:' + body.key.id,
+            { message: { extendedTextMessage: { contextInfo: { stanzaId: key.id } } } },
+            'WAID:' + key.id,
             null,
           );
-          if (!send) {
-            this.logger.warn('edited message not sent');
-            return;
-          }
         }
+
         return;
       }
 

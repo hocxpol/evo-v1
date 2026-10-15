@@ -4,9 +4,11 @@ WORKDIR /evolution
 # Copiamos apenas o necessário para recompilar o dist com as mudanças locais
 COPY tsconfig.json tsup.config.ts package.json ./
 COPY src ./src
+COPY scripts ./scripts
 
 # Recompila usando os node_modules já presentes na imagem base
-RUN npm run build
+# (o patch do baileys é reaplicado porque a imagem base não o traz)
+RUN node scripts/patch-baileys-message-secret.js && npm run build
 
 # Runtime final: reaproveita a imagem oficial e apenas sobrepõe o dist
 FROM evoapicloud/evolution-api:latest AS final
