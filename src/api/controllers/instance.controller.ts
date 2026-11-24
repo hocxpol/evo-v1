@@ -442,8 +442,10 @@ export class InstanceController {
   public async logout({ instanceName }: InstanceDto) {
     const { instance } = await this.connectionState({ instanceName });
 
+    // Idempotente: se já está desconectada, retorna sucesso silenciosamente.
+    // Evita falhar o fluxo de delete do painel, que sempre chama logout antes do delete.
     if (instance.state === 'close') {
-      throw new BadRequestException('The "' + instanceName + '" instance is not connected');
+      return { status: 'SUCCESS', error: false, response: { message: 'Instance was already disconnected' } };
     }
 
     try {

@@ -1,6 +1,6 @@
 # T14 — `/instance/logout` deve ser idempotente
 
-- **Status:** Planejada
+- **Status:** Concluída
 - **Data:** 2026-11-24
 - **Versão base:** Evolution API `2.3.7`
 - **Origem:** portado da Evolution API `2.4.0`
@@ -55,6 +55,31 @@ Tornar idempotente — retornar **SUCCESS** quando já estiver desconectada:
 | `deleteInstance` | Passa a não receber exceção do `logout` nesse caso |
 | Chamada direta `POST /instance/logout` em instância `close` | Retorna `200` em vez de `400` |
 | Risco | Baixo |
+
+### 4.1 Fidelidade ao upstream (auditado 2026-11-24)
+
+O bloco `logout` é **byte a byte idêntico** ao do `2.4.0-rc2` (incluídos os 2 comentários), confirmado por `diff`.
+
+### 4.2 Status HTTP e fluxo
+
+- A rota `DELETE /instance/logout/:instance` responde com `HttpStatus.OK` (`instance.router.ts:86`) → o retorno `SUCCESS` sai como **200**.
+- **`deleteInstance`** (`:467`) só chama `logout` quando `instance.state` é `connecting`/`open`; nesse caso o comportamento é inalterado. A idempotência cobre o chamado direto (rota) e o fluxo do painel que chama `logout` antes de `delete` com a instância já `close`.
+
+### 4.3 Fora de escopo (relacionado, não incluído)
+
+O `deleteInstance` do upstream envolve o `logout` num `try/catch` interno (log de "Connection Closed" e seguimento do `remove.instance`) — é o PR **#2520**, item **separado** (na lista de "verificar" do plano). **Não** faz parte da T14; aqui o `deleteInstance` permanece igual ao 2.3.7.
+
+O `restartInstance` **continua** lançando `BadRequestException` quando `state === 'close'` (`:362`) — é **intencional**: o próprio `2.4.0-rc2` manteve assim. A idempotência aplica-se **apenas** ao `logout`. Os outros 17 usos de `BadRequestException` no arquivo permanecem (import não fica órfão).
+
+### 4.4 Não-regressão
+
+Para instâncias `open`/`connecting`, o `logout` continua exatamente como antes (chama `logoutInstance()` no `try` e pode lançar `InternalServerErrorException`). Apenas o ramo `close` mudou de `throw` para `return`.
+
+### 4.5 Higiene
+
+- `git diff --check` limpo; alterações: 2 comentários + 1 linha trocada (`throw` → `return`) = 3+/1−.
+- Linha do `return` tem ~110 chars (≤120).
+- ⚠️ `npm run lint:check && npm run build` **não executados** no ambiente de auditoria — rodar antes do deploy.
 
 ## 5. Como validar
 
