@@ -1,6 +1,6 @@
 # T09 — Evolution Channel: instâncias ficam presas em `close`
 
-- **Status:** Planejada
+- **Status:** Concluída
 - **Data:** 2026-11-24
 - **Versão base:** Evolution API `2.3.7`
 - **Origem:** portado da Evolution API `2.4.0-rc2` — PR [#2420](https://github.com/evolution-foundation/evolution-api/pull/2420) (corrige [#2419](https://github.com/evolution-foundation/evolution-api/issues/2419))
@@ -87,6 +87,49 @@ Dentro do bloco `if (!instanceData.chatwootAccountId || ...)`, logo após o trec
 | **Atenção (upstream):** quem usava `close` do Evolution Channel como "gate" manual terá o estado sobrescrito | Documentar; se necessário, usar outro mecanismo de pausa |
 | `closeClient()` / `logoutInstance()` | Inalterados; `connectToWhatsapp()` sem `data` restaura `open` |
 | Risco | Médio — muda estado persistido; validar em homologação |
+
+### 4.1 Fidelidade ao upstream (auditado 2026-11-24)
+
+Os 3 blocos foram comparados com o `2.4.0-rc2` por `diff` — **byte a byte idênticos**:
+- `evolution.channel.service.ts` `connectToWhatsapp` ↔ upstream `:116-133`
+- `monitor.service.ts` condição do `if` ↔ upstream `:296-300`
+- `instance.controller.ts` bloco `EVOLUTION` ↔ upstream `:161-163`
+
+Dependências conferidas: `Integration` importado em `monitor.service.ts` (:5) e `instance.controller.ts` (:9); `this.instanceId` e `this.prismaRepository` disponíveis em `EvolutionStartupService`.
+
+### 4.2 Ordem de execução (garantia do `instanceId`)
+
+Em ambos os caminhos o `setInstance(...)` (que define `this.instance.id`) ocorre **antes** do `connectToWhatsapp()`, então o `update` no banco usa um `instanceId` válido:
+- boot: `monitor.setInstance` → `instance.setInstance({instanceId})` → `connectToWhatsapp()`.
+- criação: `createInstance` → `saveInstance`/`setInstance` → bloco `EVOLUTION`.
+
+Reforço: mesmo que o bloco da criação não rode (quando o Chatwoot já está configurado), o `saveInstance` grava `connectionStatus = 'open'` para integrações ≠ Baileys (`monitor.service.ts:251-252`), e o `stateConnection` do canal já nasce `open`.
+
+**Verificação crítica (boot):** os **3** loaders passam `integration` ao `setInstance`, então a condição nova dispara de fato — `loadInstancesFromRedis` (:331), `loadInstancesFromDatabasePostgres` (:360) e `loadInstancesFromProvider` (:387) todos usam `integration: <instance>.integration`.
+
+### 4.3 Efeitos colaterais e riscos residuais
+
+| Ponto | Avaliação |
+|---|---|
+| Escrita extra no banco no boot | Um `instance.update` por instância EVOLUTION ao subir (igual ao upstream) |
+| `this.loadChatwoot()` | Continua **sem** `await` (pré-existente; inalterado) |
+| Falha do `update` | `connectToWhatsapp()` é aguardado no boot; uma falha de DB poderia rejeitar — mesmo comportamento do upstream |
+| Gate manual via `close` | Sobrescrito para `open` no boot (documentado no upstream) |
+| Baileys/Meta/Business | Não afetados (condições específicas por integração) |
+
+### 4.4 Higiene
+
+- `git diff --check` limpo. Alterações: `monitor.service.ts` (5+/1−), `instance.controller.ts` (4+), `evolution.channel.service.ts` (9+).
+- Sem linhas >120 introduzidas (a única >120 é template literal pré-existente, idêntica no upstream; Prettier não quebra template strings).
+- ⚠️ `npm run lint:check && npm run build` **não executados** no ambiente de auditoria — rodar antes do deploy.
+
+### 4.5 Cobertura do sintoma e não-regressão
+
+- **Não-regressão:** a condição apenas **adiciona** `integration === EVOLUTION`. Baileys/Meta com `connectionStatus === 'close'` **continuam** pulando o autoconnect (comportamento anterior preservado).
+- **`no.connection`:** o handler que seta `state = 'close'` é emitido **apenas** pelo Baileys (`whatsapp.baileys.service.ts:362`) — o Evolution Channel não o dispara, então não reintroduz o problema.
+- **Enum:** `Integration.EVOLUTION = 'EVOLUTION'` existe (`src/api/types/wa.types.ts:156`).
+- **Escopo:** o "preso em `close`" é resolvido em **boot** e **criação** (escopo do #2420). Um `close` em runtime só é promovido no próximo boot/`connect`/`restart` — igual ao upstream.
+- **Log cosmético:** para EVOLUTION o log imprime `Auto-connecting ... (status: close)` (valor antigo do campo) — inofensivo, idêntico ao upstream.
 
 ## 5. Como validar
 
