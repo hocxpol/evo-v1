@@ -22,7 +22,7 @@ Registro das correções/ajustes aplicados neste fork da Evolution API, organiza
 | **T12** | `getLastMessage`: filtro JSON do Prisma retorna mensagem errada (#2495/#2515) | Concluída | [t12/README.md](./t12/README.md) |
 | **T13** | List messages: clonagem JSON destrutiva quebra campos `Long` (#2461) | Concluída | [t13/README.md](./t13/README.md) |
 | **T14** | `/instance/logout` idempotente (não falhar quando já desconectada) | Concluída | [t14/README.md](./t14/README.md) |
-| **T15** | WhatsApp: GIF nativo (`gifPlayback`/`gifAttribution`) (#2540) | Planejada | [t15/README.md](./t15/README.md) |
+| **T15** | WhatsApp: GIF nativo (`gifPlayback`/`gifAttribution`) (#2540) | Concluída | [t15/README.md](./t15/README.md) |
 
 > **Plano de portagem 2.4.x:** visão geral, auditoria e ordem de execução em [PLANO-PORT-2.4x.md](./PLANO-PORT-2.4x.md).
 

@@ -1,6 +1,6 @@
 # T15 — WhatsApp: GIF nativo (sem conversão para vídeo)
 
-- **Status:** Planejada
+- **Status:** Concluída
 - **Data:** 2026-11-24
 - **Versão base:** Evolution API `2.3.7`
 - **Origem:** portado da Evolution API `2.4.0-rc2` — PR [#2540](https://github.com/evolution-foundation/evolution-api/pull/2540)
@@ -96,6 +96,31 @@ E o DTO/schema não expõem os campos.
 | `gifAttribution` | Aceita `0/1/2` (número ou string); valores fora do range são ignorados |
 | Canais Meta/Evolution | Não usam esses campos (mantêm `gifPlayback: false`) — não afetados |
 | Risco | Médio (toca o preparo de mídia) — validar envio normal de vídeo |
+
+### 4.1 Fidelidade ao upstream (auditado 2026-11-24)
+
+Todos os trechos são **byte a byte idênticos** ao `2.4.0-rc2` (confirmado por `diff`):
+- bloco do `prepareMediaMessage` (`whatsapp.baileys.service.ts` ↔ upstream `:3159-3168`);
+- campos em `MediaMessage` (`sendMessage.dto.ts` ↔ `:20-30`) e em `SendMediaDto` (↔ `:80-90`);
+- campos `gifPlayback`/`gifAttribution` no `mediaMessageSchema` (↔ `:104-113`).
+
+### 4.2 Tipagem
+
+O método é `prepareMediaMessage(mediaMessage: MediaMessage)` (`:2977`); por isso os campos foram adicionados a `MediaMessage` (não só a `SendMediaDto`) — sem isso, `mediaMessage.gifPlayback` não compilaria.
+
+### 4.3 Backward-compat (verificada)
+
+Sem o campo, `gifPlayback === true` e `=== 'true'` são falsos → `gifPlayback` continua `false`, **idêntico** ao comportamento anterior. `gifAttribution` só é aplicado se estiver em `0/1/2` (número ou string); qualquer outro valor é ignorado.
+
+### 4.4 Diferença NÃO relacionada (backlog #2470)
+
+O `mediaMessageSchema` upstream usa `mentionsEveryOne`; o nosso ainda usa `everyOne` (nomenclatura antiga). **Não** foi tocado — é o item **#2470** do backlog ("mentionsEveryOne honra `false`"), fora do escopo da T15.
+
+### 4.5 Higiene
+
+- `git diff --check` limpo. Alterações: `sendMessage.dto.ts` (4+), `message.schema.ts` (9+), `whatsapp.baileys.service.ts` (8+/1−).
+- Nenhuma linha >120 nas regiões alteradas.
+- ⚠️ `npm run lint:check && npm run build` **não executados** no ambiente de auditoria — rodar antes do deploy.
 
 ## 5. Como validar
 
