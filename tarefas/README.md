@@ -27,7 +27,7 @@ Registro das correções/ajustes aplicados neste fork da Evolution API, organiza
 | **T17** | Chatbot: sessão `closed` bloqueia reativação do bot | Concluída | [t17/README.md](./t17/README.md) |
 | **T18** | `markMessageAsRead`: filtro de JID ignora `@lid`/business | Concluída | [t18/README.md](./t18/README.md) |
 | **T19** | `deleteInstance`: instância "zumbi" quando o logout falha (#2520) | Concluída | [t19/README.md](./t19/README.md) |
-| **T20** | Chats: normalização `remoteJid`/`@lid` no histórico | Planejada | [t20/README.md](./t20/README.md) |
+| **T20** | Chats: normalização `remoteJid`/`@lid` no histórico | Concluída | [t20/README.md](./t20/README.md) |
 
 > **Fases 2.4.x (T08–T20):** visão geral e auditoria de lacunas em [PLANO-PORT-2.4x.md](./PLANO-PORT-2.4x.md).
 
