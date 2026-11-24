@@ -15,6 +15,16 @@ Registro das correções/ajustes aplicados neste fork da Evolution API, organiza
 | **T05** | Chatwoot: apagar mensagem do atendente não reflete no WhatsApp do cliente | Concluída | [t05/README.md](./t05/README.md) |
 | **T06** | Chatwoot: edição de mensagens (Glorium.Chat T13) não funciona ponta a ponta | Em andamento | [t06/README.md](./t06/README.md) |
 | **T07** | Baileys: instância para de receber (stanzas `<status>` sem ack) | Concluída | [t07/README.md](./t07/README.md) |
+| **T08** | WhatsApp: envio para contatos `@lid` pode lançar `BadRequestException` (#2544) | Concluída | [t08/README.md](./t08/README.md) |
+| **T09** | Evolution Channel: instâncias presas em `close` (#2420) | Planejada | [t09/README.md](./t09/README.md) |
+| **T10** | WhatsApp: áudio com `quoted` não vira resposta encadeada (#2516) | Planejada | [t10/README.md](./t10/README.md) |
+| **T11** | API de instância: nome com espaços causa 404 (#2546) | Planejada | [t11/README.md](./t11/README.md) |
+| **T12** | `getLastMessage`: filtro JSON do Prisma retorna mensagem errada (#2495/#2515) | Planejada | [t12/README.md](./t12/README.md) |
+| **T13** | List messages: clonagem JSON destrutiva quebra campos `Long` (#2461) | Planejada | [t13/README.md](./t13/README.md) |
+| **T14** | `/instance/logout` idempotente (não falhar quando já desconectada) | Planejada | [t14/README.md](./t14/README.md) |
+| **T15** | WhatsApp: GIF nativo (`gifPlayback`/`gifAttribution`) (#2540) | Planejada | [t15/README.md](./t15/README.md) |
+
+> **Plano de portagem 2.4.x:** visão geral, auditoria e ordem de execução em [PLANO-PORT-2.4x.md](./PLANO-PORT-2.4x.md).
 
 ## Auditoria
 
