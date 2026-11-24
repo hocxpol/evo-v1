@@ -116,7 +116,14 @@ Sem o campo, `gifPlayback === true` e `=== 'true'` são falsos → `gifPlayback`
 
 O `mediaMessageSchema` upstream usa `mentionsEveryOne`; o nosso ainda usa `everyOne` (nomenclatura antiga). **Não** foi tocado — é o item **#2470** do backlog ("mentionsEveryOne honra `false`"), fora do escopo da T15.
 
-### 4.5 Higiene
+### 4.5 Cobertura ponta a ponta (auditado 2026-11-24)
+
+- Rota `sendMedia` usa `mediaMessageSchema` (`sendMessage.router.ts:69`) → `gifPlayback`/`gifAttribution` **passam na validação**.
+- `mediaMessage(data: SendMediaDto)` faz `mediaData = { ...data }` e chama `prepareMediaMessage(mediaData)` (`:3219-3224`) → os campos chegam ao preparo.
+- `prepareMedia = await prepareWAMessageMedia({...} as any, …)` (`:3015`); o objeto indexado por `mediaType` carrega `gifPlayback`/`gifAttribution` do `VideoMessage` — mesma construção do upstream.
+- `ptvMessage` monta um `mediaData` próprio (sem os campos gif) — `ptv` é outro tipo, não afetado.
+
+### 4.6 Higiene
 
 - `git diff --check` limpo. Alterações: `sendMessage.dto.ts` (4+), `message.schema.ts` (9+), `whatsapp.baileys.service.ts` (8+/1−).
 - Nenhuma linha >120 nas regiões alteradas.
