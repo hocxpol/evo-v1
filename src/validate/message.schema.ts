@@ -77,7 +77,7 @@ export const textMessageSchema: JSONSchema7 = {
       description: 'Enter a value in milliseconds',
     },
     quoted: { ...quotedOptionsSchema },
-    everyOne: { type: 'boolean', enum: [true, false] },
+    mentionsEveryOne: { type: 'boolean', enum: [true, false] },
     mentioned: {
       type: 'array',
       minItems: 1,
@@ -116,7 +116,7 @@ export const mediaMessageSchema: JSONSchema7 = {
       description: 'Enter a value in milliseconds',
     },
     quoted: { ...quotedOptionsSchema },
-    everyOne: { type: 'boolean', enum: [true, false] },
+    mentionsEveryOne: { type: 'boolean', enum: [true, false] },
     mentioned: {
       type: 'array',
       minItems: 1,
@@ -142,7 +142,7 @@ export const ptvMessageSchema: JSONSchema7 = {
       description: 'Enter a value in milliseconds',
     },
     quoted: { ...quotedOptionsSchema },
-    everyOne: { type: 'boolean', enum: [true, false] },
+    mentionsEveryOne: { type: 'boolean', enum: [true, false] },
     mentioned: {
       type: 'array',
       minItems: 1,
@@ -168,7 +168,7 @@ export const audioMessageSchema: JSONSchema7 = {
       description: 'Enter a value in milliseconds',
     },
     quoted: { ...quotedOptionsSchema },
-    everyOne: { type: 'boolean', enum: [true, false] },
+    mentionsEveryOne: { type: 'boolean', enum: [true, false] },
     mentioned: {
       type: 'array',
       minItems: 1,
@@ -218,7 +218,7 @@ export const stickerMessageSchema: JSONSchema7 = {
       description: 'Enter a value in milliseconds',
     },
     quoted: { ...quotedOptionsSchema },
-    everyOne: { type: 'boolean', enum: [true, false] },
+    mentionsEveryOne: { type: 'boolean', enum: [true, false] },
     mentioned: {
       type: 'array',
       minItems: 1,
@@ -247,7 +247,7 @@ export const locationMessageSchema: JSONSchema7 = {
       description: 'Enter a value in milliseconds',
     },
     quoted: { ...quotedOptionsSchema },
-    everyOne: { type: 'boolean', enum: [true, false] },
+    mentionsEveryOne: { type: 'boolean', enum: [true, false] },
     mentioned: {
       type: 'array',
       minItems: 1,
@@ -334,7 +334,7 @@ export const pollMessageSchema: JSONSchema7 = {
       description: 'Enter a value in milliseconds',
     },
     quoted: { ...quotedOptionsSchema },
-    everyOne: { type: 'boolean', enum: [true, false] },
+    mentionsEveryOne: { type: 'boolean', enum: [true, false] },
     mentioned: {
       type: 'array',
       minItems: 1,
@@ -391,7 +391,7 @@ export const listMessageSchema: JSONSchema7 = {
       description: 'Enter a value in milliseconds',
     },
     quoted: { ...quotedOptionsSchema },
-    everyOne: { type: 'boolean', enum: [true, false] },
+    mentionsEveryOne: { type: 'boolean', enum: [true, false] },
     mentioned: {
       type: 'array',
       minItems: 1,
@@ -442,7 +442,7 @@ export const buttonsMessageSchema: JSONSchema7 = {
       description: 'Enter a value in milliseconds',
     },
     quoted: { ...quotedOptionsSchema },
-    everyOne: { type: 'boolean', enum: [true, false] },
+    mentionsEveryOne: { type: 'boolean', enum: [true, false] },
     mentioned: {
       type: 'array',
       minItems: 1,

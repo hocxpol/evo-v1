@@ -23,6 +23,13 @@ Registro das correções/ajustes aplicados neste fork da Evolution API, organiza
 | **T13** | List messages: clonagem JSON destrutiva quebra campos `Long` (#2461) | Concluída | [t13/README.md](./t13/README.md) |
 | **T14** | `/instance/logout` idempotente (não falhar quando já desconectada) | Concluída | [t14/README.md](./t14/README.md) |
 | **T15** | WhatsApp: GIF nativo (`gifPlayback`/`gifAttribution`) (#2540) | Concluída | [t15/README.md](./t15/README.md) |
+| **T16** | Baixo risco: flag IPv6 no boot + `everyOne`→`mentionsEveryOne` | Concluída | [t16/README.md](./t16/README.md) |
+| **T17** | Chatbot: sessão `closed` bloqueia reativação do bot | Concluída | [t17/README.md](./t17/README.md) |
+| **T18** | `markMessageAsRead`: filtro de JID ignora `@lid`/business | Concluída | [t18/README.md](./t18/README.md) |
+| **T19** | `deleteInstance`: instância "zumbi" quando o logout falha (#2520) | Concluída | [t19/README.md](./t19/README.md) |
+| **T20** | Chats: normalização `remoteJid`/`@lid` no histórico | Planejada | [t20/README.md](./t20/README.md) |
+
+> **Fases 2.4.x (T08–T20):** visão geral e auditoria de lacunas em [PLANO-PORT-2.4x.md](./PLANO-PORT-2.4x.md).
 
 > **Plano de portagem 2.4.x:** visão geral, auditoria e ordem de execução em [PLANO-PORT-2.4x.md](./PLANO-PORT-2.4x.md).
 

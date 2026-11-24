@@ -57,3 +57,30 @@ Cada `tNN/README.md` segue o padrão do fork: **Status → Data → Versão base
 - Testes de regressão T02–T07 (checklist do doc de auditoria).
 - Validar ephemeral, S3/MinIO, grupos/LID, memória/listeners, índice `Chat`, fuso, filas/retry, sessão/restart.
 - Triagem dos "⚠️ verificar" da 2.4.0.
+
+---
+
+## Segunda onda — fases T16–T20 (lacunas 2.4.0)
+
+Auditoria de lacunas (doc Glorium × 2.4.0 × nosso fork): a **2.4.0-rc2 está 100% coberta** (T08–T15). O que restou são itens do **`2.4.0` Fixed** que não viraram fase. Nenhum exige o breaking change do 2.4.0.
+
+### Fases T16–T20 — prioridade / simplicidade / risco
+
+> **Numeração = ordem de execução.** As fases foram renumeradas para que **T16 → T20** já seja a ordem do mais simples/seguro ao mais complexo (executar em sequência).
+
+| Fase | Tema | Simplicidade | Risco | Código pronto (upstream)? | Arquivo(s) |
+|---|---|---|---|---|---|
+| **T16** | Flag IPv6 no boot + `everyOne`→`mentionsEveryOne` | 🟢 muito alta | 🟢 **muito baixo** | ✅ drop-in | `package.json`, `message.schema.ts` |
+| **T17** | Chatbot: sessão `closed` bloqueia reativação | 🟢 muito alta (2 linhas) | 🟢 baixo | ✅ drop-in | `base-chatbot.controller.ts` |
+| **T18** | `markMessageAsRead`: filtro JID ignora `@lid`/business | 🟢 muito alta (1 linha) | 🟢 baixo | ✅ drop-in | `whatsapp.baileys.service.ts` |
+| **T19** | `deleteInstance` robusto quando logout falha (#2520) | 🟢 alta | 🟢 baixo | ✅ drop-in | `instance.controller.ts` |
+| **T20** | Chats: normalização `remoteJid`/`@lid` no histórico | 🟠 média (refactor) | 🟠 **médio** | ⚠️ requer estudo | `whatsapp.baileys.service.ts` |
+
+**Ordem de execução:** **T16 → T17 → T18 → T19 → T20** (sequencial).
+
+### Observações da auditoria
+- **`#2470` (`mentionsEveryOne`)**: no nosso validador (`jsonschema`) as props extras **não** são removidas, então o campo já funciona; o que falta é só **alinhar o nome no schema** (incluído no T20).
+- **`#2510` (history sync race)**: já satisfeito no base — emitimos `MESSAGES_SET` **antes** do `contacts.upsert`.
+- **`accountLid`/chats (T18)**: sem migração (o `remoteLid` é descartado antes do `createMany`); é a única fase que mexe em mapeamento de chat/contato.
+- **Fora de escopo (features/breaking):** `markMessageAsPlayed`/carrossel, SQS `BASE_URL`, Manager v2, licensing.
+- **`#2493` (Business Cloud race)**: precisa do diff do PR para avaliar — não virou fase.
