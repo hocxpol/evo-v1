@@ -18,7 +18,7 @@ Registro das correções/ajustes aplicados neste fork da Evolution API, organiza
 | **T08** | WhatsApp: envio para contatos `@lid` pode lançar `BadRequestException` (#2544) | Concluída | [t08/README.md](./t08/README.md) |
 | **T09** | Evolution Channel: instâncias presas em `close` (#2420) | Concluída | [t09/README.md](./t09/README.md) |
 | **T10** | WhatsApp: áudio com `quoted` não vira resposta encadeada (#2516) | Concluída | [t10/README.md](./t10/README.md) |
-| **T11** | API de instância: nome com espaços causa 404 (#2546) | Planejada | [t11/README.md](./t11/README.md) |
+| **T11** | API de instância: nome com espaços causa 404 (#2546) | Concluída | [t11/README.md](./t11/README.md) |
 | **T12** | `getLastMessage`: filtro JSON do Prisma retorna mensagem errada (#2495/#2515) | Planejada | [t12/README.md](./t12/README.md) |
 | **T13** | List messages: clonagem JSON destrutiva quebra campos `Long` (#2461) | Planejada | [t13/README.md](./t13/README.md) |
 | **T14** | `/instance/logout` idempotente (não falhar quando já desconectada) | Planejada | [t14/README.md](./t14/README.md) |

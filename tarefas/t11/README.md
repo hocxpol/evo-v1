@@ -1,6 +1,6 @@
 # T11 — API de instância: nome com espaços causa `404`
 
-- **Status:** Planejada
+- **Status:** Concluída
 - **Data:** 2026-11-24
 - **Versão base:** Evolution API `2.3.7`
 - **Origem:** portado da Evolution API `2.4.0-rc2` — PR [#2546](https://github.com/evolution-foundation/evolution-api/pull/2546) (corrige [#2543](https://github.com/evolution-foundation/evolution-api/issues/2543))
@@ -38,6 +38,40 @@ Assim o nome é trimado **antes** de: gerar `hash`, `waMonitor.saveInstance(...)
 | `instanceSchema` | Continua aceitando `type: string`; sem quebra de contrato |
 | Outros pontos que criam instância | `waMonitor.saveInstance` é chamado **depois** do trim (usa o nome já normalizado) |
 | Risco | Baixo |
+
+### 4.1 Fidelidade ao upstream (auditado 2026-11-24)
+
+A linha é **byte a byte idêntica** à do `2.4.0-rc2` (`instance.controller.ts:39`), confirmado por `diff` (indentação inclusive).
+
+### 4.2 Ordem de uso (garantia do efeito)
+
+O trim ocorre na primeira linha do `try`, **antes** de todos os usos do nome: `saveInstance` (:67), `instance.setInstance` (:78), chave `waMonitor.waInstances[...]` (:86), `eventManager.setInstance` (:90), webhook (:93) e `nameInbox`/webhook Chatwoot (:304-305). Logo, tudo usa o nome já normalizado.
+
+**Ponto único de criação:** há apenas um `createInstance` (o do controller) e `waMonitor.saveInstance` é chamado **somente** ali (`instance.controller.ts:64`) — não existe outro caminho de criação que também precise do trim.
+
+### 4.3 Edge case / risco residual (aceito, igual ao upstream)
+
+O `instanceLoggedGuard` roda **antes** do controller e checa duplicidade com o nome **não trimado** (`instance.guard.ts:45`). Cenário `" X "` quando já existe `"X"`:
+- o guard **passa** (não encontra `" X "`);
+- o trim converte para `"X"` → `saveInstance` → **violação do `@unique` de `Instance.name`** (`prisma/postgresql-schema.prisma`: `name ... @unique`);
+- o `catch` externo do `createInstance` (`:308-312`) converte em `BadRequestException` (400, com a mensagem do Prisma) e chama `this.waMonitor.deleteInstance(...)`.
+
+Ou seja: o caso "duplicado por espaços" retorna 400 (não o 403 amigável do guard). **É o comportamento do upstream** (o #2546 só trimou no controller) — não é regressão do fluxo principal (criar uma instância com espaços nas bordas agora funciona).
+
+**Cenário "só espaços":** um nome `"   "` passa na validação (`isNotEmpty` → `minLength: 1`; 3 espaços = ok) e o trim o reduz a `""` → instância com nome vazio (URL nunca casa → 404). Antes do trim o problema era equivalente (nome com espaços), então **não é regressão**; o upstream também não bloqueia esse caso.
+
+### 4.4 Higiene
+
+- `git diff --check` limpo; **1 linha** adicionada; ~62 chars (≤120).
+- ⚠️ `npm run lint:check && npm run build` **não executados** no ambiente de auditoria — rodar antes do deploy.
+
+### 4.5 Hardening opcional (não implementado)
+
+Para eliminar os dois edge cases acima (duplicado por espaços e "só espaços"), seria preciso **desviar do upstream**:
+1. trimar também no `instanceLoggedGuard` (antes de checar duplicidade); e
+2. rejeitar nome vazio após o trim (`BadRequestException`).
+
+Não implementado — mantida a paridade com o #2546.
 
 ## 5. Como validar
 
