@@ -36,32 +36,32 @@ export class MetaController extends ChannelController implements ChannelControll
         return;
       }
 
-      data.entry?.forEach(async (entry: any) => {
-        const numberId = entry.changes[0].value.metadata.phone_number_id;
+      // ACK rápido ao Meta: `forEach` não aguarda os callbacks async, então o retorno
+      // abaixo já é imediato. Envolvemos cada entry num IIFE async com `.catch` para
+      // capturar erros do processamento em background e evitar unhandled rejection.
+      data.entry?.forEach((entry: any) => {
+        void (async () => {
+          const numberId = entry.changes[0].value.metadata.phone_number_id;
 
-        if (!numberId) {
-          this.logger.error('WebhookService -> receiveWebhookMeta -> numberId not found');
-          return {
-            status: 'success',
-          };
-        }
+          if (!numberId) {
+            this.logger.error('WebhookService -> receiveWebhookMeta -> numberId not found');
+            return;
+          }
 
-        const instance = await this.prismaRepository.instance.findFirst({
-          where: { number: numberId },
+          const instance = await this.prismaRepository.instance.findFirst({
+            where: { number: numberId },
+          });
+
+          if (!instance) {
+            this.logger.error('WebhookService -> receiveWebhookMeta -> instance not found');
+            return;
+          }
+
+          await this.waMonitor.waInstances[instance.name].connectToWhatsapp(data);
+        })().catch((error) => {
+          this.logger.error('WebhookService -> receiveWebhookMeta -> processing error');
+          this.logger.error(error);
         });
-
-        if (!instance) {
-          this.logger.error('WebhookService -> receiveWebhookMeta -> instance not found');
-          return {
-            status: 'success',
-          };
-        }
-
-        await this.waMonitor.waInstances[instance.name].connectToWhatsapp(data);
-
-        return {
-          status: 'success',
-        };
       });
     }
 

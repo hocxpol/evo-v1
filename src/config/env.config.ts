@@ -296,6 +296,7 @@ export type CacheConfLocal = {
   TTL: number;
 };
 export type SslConf = { PRIVKEY: string; FULLCHAIN: string };
+export type Baileys = { VERSION?: string };
 export type Webhook = {
   GLOBAL?: GlobalWebhook;
   EVENTS: EventsWebhook;
@@ -419,6 +420,7 @@ export interface Env {
   EVOAI: Evoai;
   FLOWISE: Flowise;
   CACHE: CacheConf;
+  BAILEYS: Baileys;
   S3?: S3;
   AUTHENTICATION: Auth;
   METRICS: Metrics;
@@ -851,6 +853,9 @@ export class ConfigService {
           ENABLED: process.env?.CACHE_LOCAL_ENABLED === 'true',
           TTL: Number.parseInt(process.env?.CACHE_REDIS_TTL) || 86400,
         },
+      },
+      BAILEYS: {
+        VERSION: process.env?.CONFIG_BAILEYS_VERSION,
       },
       S3: {
         ACCESS_KEY: process.env?.S3_ACCESS_KEY,

@@ -28,8 +28,19 @@ Registro das correções/ajustes aplicados neste fork da Evolution API, organiza
 | **T18** | `markMessageAsRead`: filtro de JID ignora `@lid`/business | Concluída | [t18/README.md](./t18/README.md) |
 | **T19** | `deleteInstance`: instância "zumbi" quando o logout falha (#2520) | Concluída | [t19/README.md](./t19/README.md) |
 | **T20** | Chats: normalização `remoteJid`/`@lid` no histórico | Concluída | [t20/README.md](./t20/README.md) |
+| **T21** | Bots: `findBotByTrigger` casa keyword/regex em mídia/sem texto | Concluída | [t21/README.md](./t21/README.md) |
+| **T22** | Bots/Ads: `getConversationMessage` (localização + Facebook Ads) | Concluída | [t22/README.md](./t22/README.md) |
+| **T23** | `createJid` não preserva `@newsletter` | Concluída | [t23/README.md](./t23/README.md) |
+| **T24** | `onWhatsappCache` race `P2002` (remoteJid) | Concluída | [t24/README.md](./t24/README.md) |
+| **T25** | Build: `NODE_OPTIONS=--max-old-space-size=2048` | Concluída | [t25/README.md](./t25/README.md) |
+| **T26** | Meta/Cloud `#2493` (senderJid + ordem Chatwoot→bot) | Concluída | [t26/README.md](./t26/README.md) |
+| **T26b** | Webhook Meta: ACK assíncrono (já era) + tratamento de erro no background | Concluída | [t26b/README.md](./t26b/README.md) |
+| **T27** | `Instance.token` 255→500 + migração | Concluída | [t27/README.md](./t27/README.md) |
+| **T28a** | `fetchLatestWaWebVersion`: cache da versão (sem versão manual) | Concluída | [t28a/README.md](./t28a/README.md) |
+| **T28b** | `fetchLatestWaWebVersion`: versão manual (`CONFIG_BAILEYS_VERSION`) | Concluída | [t28b/README.md](./t28b/README.md) |
 
 > **Fases 2.4.x (T08–T20):** visão geral e auditoria de lacunas em [PLANO-PORT-2.4x.md](./PLANO-PORT-2.4x.md).
+> **Segunda onda (T21–T28):** visão geral, ordem por risco e exclusões em [PLANO-PORT-2.4x-FASE2.md](./PLANO-PORT-2.4x-FASE2.md).
 
 > **Plano de portagem 2.4.x:** visão geral, auditoria e ordem de execução em [PLANO-PORT-2.4x.md](./PLANO-PORT-2.4x.md).
 
