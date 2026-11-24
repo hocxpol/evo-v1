@@ -31,7 +31,12 @@ jobs:
 
     - name: Install packages
       run: npm ci
-    
+
+    - name: Verify Baileys patches applied
+      run: |
+        node scripts/patch-baileys-message-secret.js --strict
+        node scripts/patch-baileys-status-ack.js --strict
+
     - name: Check linting
       run: npm run lint:check
 

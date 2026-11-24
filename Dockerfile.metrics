@@ -4,18 +4,23 @@ WORKDIR /evolution
 # Copiamos apenas o necessário para recompilar o dist com as mudanças locais
 COPY tsconfig.json tsup.config.ts package.json ./
 COPY src ./src
-COPY scripts ./scripts
 
-# Recompila usando os node_modules já presentes na imagem base
-# (o patch do baileys é reaplicado porque a imagem base não o traz)
-RUN node scripts/patch-baileys-message-secret.js && npm run build
+# Recompila usando os node_modules já presentes na imagem base.
+# O patch do baileys é um arquivo de runtime em node_modules (o baileys é external no
+# tsup), então ele NÃO é embutido no dist — precisa ser aplicado na stage final, abaixo.
+RUN npm run build
 
 # Runtime final: reaproveita a imagem oficial e apenas sobrepõe o dist
 FROM evoapicloud/evolution-api:latest AS final
 WORKDIR /evolution
 COPY --from=base /evolution/dist ./dist
 
+# (Re)aplica os patches do baileys em node_modules. Os scripts são idempotentes e
+# fail-soft: se a imagem base já trouxer o patch (upstream >= 2.3.8), apenas registram
+# "already patched" sem quebrar o build.
+COPY scripts ./scripts
+RUN node scripts/patch-baileys-message-secret.js && node scripts/patch-baileys-status-ack.js
+
 ENV PROMETHEUS_METRICS=true
 
 # Entrada original da imagem oficial já sobe o app em /evolution
-

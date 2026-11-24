@@ -1,3 +1,14 @@
+# Fork Evo-v1 — patch Baileys status ack (2026-11-24)
+
+### Fixed
+
+* **Baileys Status Stanzas**: passa a reconhecer (*ack*) os stanzas de topo `<status>` que o WhatsApp passou a enviar
+  - Corrige instâncias que ficam `open` e enviam, mas param de receber (ou recebem horas atrasado)
+  - Corrige a queda de conexão com `stream errored out` (`ack class="status"`) a cada ~50 minutos
+  - Mensagens retidas são entregues após a atualização, sem nova leitura de QR code
+  - Uma falha no ack de status não trava mais o processamento das mensagens offline
+  - Portado da Evolution API `2.3.8` (upstream) como script de `postinstall` idempotente — `scripts/patch-baileys-status-ack.js`. Ver [tarefas/t07](./tarefas/t07/README.md)
+
 # 2.3.7 (2025-12-05)
 
 ### Features

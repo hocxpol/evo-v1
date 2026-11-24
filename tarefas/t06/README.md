@@ -607,10 +607,10 @@ msg = msg.deviceSentMessage?.message || msg;   // 7.0.0-rc.9 (e até rc14)
 | Arquivo | Mudança |
 |---|---|
 | `scripts/patch-baileys-message-secret.js` (novo) | Aplica o merge do PR `#2566` (`{ ...outer, ...inner }`) preservando o `messageContextInfo` externo. Idempotente e *fail-soft* (não quebra o install se o padrão mudar) |
-| `package.json` | `"postinstall": "node scripts/patch-baileys-message-secret.js"` |
-| `Dockerfile` / `Dockerfile.metrics` | `COPY ./scripts` antes do `npm ci` / do build, para o patch rodar |
+| `package.json` | `"postinstall": "node scripts/patch-baileys-message-secret.js"` (o T07 passou a encadear também o script de status — ver [t07](../t07/README.md)) |
+| `Dockerfile` / `Dockerfile.metrics` | `COPY ./scripts` antes do `npm ci` / do build, para o patch rodar (no `Dockerfile.metrics`, o T07 moveu a aplicação para a stage final — ver [t07](../t07/README.md)) |
 | `src/api/integrations/channel/whatsapp/whatsapp.baileys.service.ts` | `unwrapSecretEdit`: além de LID/PN, tenta o **par origem × editor** (cartesian product), cobrindo o *“orig sender hack”* do whatsmeow quando o envelope e a original usam formas de JID diferentes |
-| `test/all.test.ts` | testes do transform do patch (correto + idempotente + fonte desconhecida intacta) |
+| `test/all.test.ts` | testes do transform do patch (correto + idempotente + fonte desconhecida intacta) — arquivo **não presente** no repositório; a cobertura atual é o `--self-test` embutido nos scripts (`node scripts/patch-baileys-message-secret.js --self-test`), ver [t07](../t07/README.md) |
 
 **Por que agora por patch (e não só no Evolution):** o `messageContextInfo` externo é **inalcançável** no handler do Evolution (a Baileys já o descartou na decodificação). Só o patch no ponto de decode restaura o segredo. O patch é de uma linha, coberto por teste, e o `postinstall` o mantém após qualquer `npm install`/`npm ci`.
 

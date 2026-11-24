@@ -14,6 +14,7 @@ Registro das correções/ajustes aplicados neste fork da Evolution API, organiza
 | **T04** | Chatwoot: `chatwootConversationId`/`chatwootInboxId` errados nos canais Meta e Evolution | Concluída | [t04/README.md](./t04/README.md) |
 | **T05** | Chatwoot: apagar mensagem do atendente não reflete no WhatsApp do cliente | Concluída | [t05/README.md](./t05/README.md) |
 | **T06** | Chatwoot: edição de mensagens (Glorium.Chat T13) não funciona ponta a ponta | Em andamento | [t06/README.md](./t06/README.md) |
+| **T07** | Baileys: instância para de receber (stanzas `<status>` sem ack) | Concluída | [t07/README.md](./t07/README.md) |
 
 ## Auditoria
 
@@ -28,6 +29,8 @@ Registro das correções/ajustes aplicados neste fork da Evolution API, organiza
 | `src/api/integrations/chatbot/chatwoot/services/chatwoot.service.ts` | T02, T03, T05 |
 | `src/api/integrations/channel/evolution/evolution.channel.service.ts` | T04 |
 | `src/api/integrations/channel/meta/whatsapp.business.service.ts` | T04 |
+| `scripts/patch-baileys-message-secret.js` | T06 |
+| `scripts/patch-baileys-status-ack.js` | T07 |
 
 ## Contexto comum
 
