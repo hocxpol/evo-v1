@@ -1,6 +1,6 @@
 # T10 — WhatsApp: áudio com `quoted` não é enviado como resposta encadeada
 
-- **Status:** Planejada
+- **Status:** Concluída
 - **Data:** 2026-11-24
 - **Versão base:** Evolution API `2.3.7`
 - **Origem:** portado da Evolution API `2.4.0-rc2` — PR [#2516](https://github.com/evolution-foundation/evolution-api/pull/2516) (corrige [#2485](https://github.com/evolution-foundation/evolution-api/issues/2485))
@@ -59,6 +59,48 @@ Adicionar `quoted: data?.quoted` nos **dois** caminhos (encoded e direct):
 | Caminho `encoding: true` (convertido) e direct | Ambos ajustados (paridade com upstream) |
 | Formato do payload `quoted` | Mesmo tipo `Quoted` já usado pelos demais envios |
 | Risco | Baixo — 1 campo aditivo |
+
+### 4.1 Fidelidade ao upstream (auditado 2026-11-24)
+
+As duas linhas de opções são **byte a byte idênticas** ao `2.4.0-rc2` (confirmado por `diff`):
+- caminho `encoded` → upstream `:3572`
+- caminho `direct` → upstream `:3598`
+
+### 4.2 Escopo
+
+Há exatamente **2** ocorrências de `presence: 'recording'` no arquivo, ambas dentro de `audioWhatsapp` (os dois caminhos). Ambas foram alteradas; nenhum outro método de envio foi tocado.
+
+### 4.3 Efeitos colaterais e riscos residuais
+
+| Ponto | Avaliação |
+|---|---|
+| Validação de número | `sendMessageWithTyping` já valida antes (guarda do T08) — `quoted` não interfere |
+| Interpolação/assinatura | Nenhuma; `quoted` é apenas encaminhado ao Baileys |
+| `getAudioMetadata` (`seconds`/`waveform`) | **Não** incluído (é outro PR, não o #2516) — o áudio continua sem esses metadados, como antes |
+| Caminho `encoding: false` | Também ajustado |
+
+### 4.4 Higiene
+
+- `git diff --check` limpo; **2 linhas** alteradas (2+/2−) no arquivo.
+- Comprimento: 76 chars (ambas ≤120).
+- ⚠️ `npm run lint:check && npm run build` **não executados** no ambiente de auditoria — rodar antes do deploy.
+
+### 4.5 Cobertura ponta a ponta (auditado 2026-11-24)
+
+Confirmado que o `quoted` **não é descartado** em nenhuma camada — o fix funciona de fato, não apenas compila:
+
+| Camada | Verificação |
+|---|---|
+| Rota | `sendWhatsAppAudio` usa `audioMessageSchema` (`sendMessage.router.ts:88-96`) |
+| **Schema** | `audioMessageSchema` **inclui** `quoted: { ...quotedOptionsSchema }` (`message.schema.ts:161`) → não é removido na validação |
+| Controller | `sendWhatsAppAudio(instance, bodyData, file)` → `audioWhatsapp(data, file)` (`sendMessage.controller.ts:67-70`) |
+| DTO | `SendAudioDto extends Metadata`, com `quoted?: Quoted` (`sendMessage.dto.ts:42`) |
+| Método | repassa `quoted: data?.quoted` (esta fase) |
+| `sendMessageWithTyping` | resolve `options.quoted` — usa `m.message` ou busca por `m.key` (`whatsapp.baileys.service.ts:2581-2589`) |
+
+**Consistência:** mesmo padrão dos demais envios de mídia (imagem/vídeo/documento), que já repassavam `quoted` — só o áudio faltava.
+
+**Ressalva (pré-existente, não introduzida pela T10):** em `multipart/form-data` o `quoted` chega como *string* (vale para todos os endpoints de mídia); envie via **JSON** para a citação correta.
 
 ## 5. Como validar
 
