@@ -81,11 +81,11 @@ import { Boom } from '@hapi/boom';
 import { createId as cuid } from '@paralleldrive/cuid2';
 import { Instance, Message } from '@prisma/client';
 import { createJid } from '@utils/createJid';
-import { decryptMessageEdit } from '@utils/secretEdit';
 import { fetchLatestWaWebVersion } from '@utils/fetchLatestWaWebVersion';
 import { makeProxyAgent, makeProxyAgentUndici } from '@utils/makeProxyAgent';
 import { getOnWhatsappCache, saveOnWhatsappCache } from '@utils/onWhatsappCache';
 import { status } from '@utils/renderStatus';
+import { decryptMessageEdit } from '@utils/secretEdit';
 import { sendTelemetry } from '@utils/sendTelemetry';
 import useMultiFileAuthStatePrisma from '@utils/use-multi-file-auth-state-prisma';
 import { AuthStateProvider } from '@utils/use-multi-file-auth-state-provider-files';
@@ -778,7 +778,9 @@ export class BaileysStartupService extends ChannelStartupService {
       received.message = decoded;
       this.logger.verbose(`[CW.EDIT] secret edit decifrado. keyId=${targetKey.id} author=${usedJid}`);
     } catch (error) {
-      this.logger.warn(`[CW.EDIT] secret edit: falha ao decifrar. keyId=${received?.message?.secretEncryptedMessage?.targetMessageKey?.id} error=${error}`);
+      this.logger.warn(
+        `[CW.EDIT] secret edit: falha ao decifrar. keyId=${received?.message?.secretEncryptedMessage?.targetMessageKey?.id} error=${error}`,
+      );
     }
   }
 

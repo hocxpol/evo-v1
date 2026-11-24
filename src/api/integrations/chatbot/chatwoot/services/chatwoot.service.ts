@@ -1405,7 +1405,9 @@ export class ChatwootService {
         instance.instanceId = waInstance?.instanceId;
 
         if (!waInstance || !instance.instanceId) {
-          this.logger.warn(`[CW.EDIT] Instância não encontrada/em memória; nada a editar. instance=${instance.instanceName}`);
+          this.logger.warn(
+            `[CW.EDIT] Instância não encontrada/em memória; nada a editar. instance=${instance.instanceName}`,
+          );
           return { message: 'bot' };
         }
 
@@ -1462,7 +1464,8 @@ export class ChatwootService {
           (this.provider.signDelimiter && this.normalizeChatwootText(this.provider.signDelimiter)) || '\n';
         const textToConcat = this.provider.signMsg ? [`*${senderName}:*`] : [];
         textToConcat.push(messageReceived);
-        const formatText = senderName === null || senderName === undefined ? messageReceived : textToConcat.join(formattedDelimiter);
+        const formatText =
+          senderName === null || senderName === undefined ? messageReceived : textToConcat.join(formattedDelimiter);
 
         try {
           // Keep the "echo by content" marker (cw_edit_<body.id>) used by the inbound guard.
@@ -1917,10 +1920,7 @@ export class ChatwootService {
   // Recovers the Chatwoot conversation for a chat from a sibling message that already
   // carries the link. Used when the edited message's own row has no `chatwootConversationId`
   // so the WAID fallback has a conversation to search in.
-  private async getChatwootConversationIdByRemoteJid(
-    instance: InstanceDto,
-    remoteJid: string,
-  ): Promise<number | null> {
+  private async getChatwootConversationIdByRemoteJid(instance: InstanceDto, remoteJid: string): Promise<number | null> {
     const sibling = await this.prismaRepository.message.findFirst({
       where: {
         instanceId: instance.instanceId,
@@ -2762,9 +2762,7 @@ export class ChatwootService {
           return;
         }
 
-        this.logger.info(
-          `[CW.EDIT] resolved conversationId=${chatwootConversationId} messageId=${chatwootMessageId}`,
-        );
+        this.logger.info(`[CW.EDIT] resolved conversationId=${chatwootConversationId} messageId=${chatwootMessageId}`);
 
         // Drop the echo of our own Chatwoot-originated edit by comparing the text we
         // sent (keyed by the Chatwoot message id) with the incoming edit. Uses the
@@ -2812,7 +2810,9 @@ export class ChatwootService {
             this.logger.info('[CW.EDIT] Conteúdo igual ao atual no Chatwoot — no-op.');
           } else if (status === 422 || status === 403 || status === 404) {
             editFallbackNeeded = true;
-            this.logger.warn(`[CW.EDIT] Edição in-place indisponível (status ${status}); usando nota 'Mensagem editada'.`);
+            this.logger.warn(
+              `[CW.EDIT] Edição in-place indisponível (status ${status}); usando nota 'Mensagem editada'.`,
+            );
           } else {
             this.logger.error(`[CW.EDIT] Falha ao atualizar a mensagem no Chatwoot. status=${status} error=${error}`);
           }

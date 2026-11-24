@@ -1,6 +1,5 @@
-import { createDecipheriv, createHmac } from 'crypto';
-
 import { proto } from 'baileys';
+import { createDecipheriv, createHmac } from 'crypto';
 
 const MESSAGE_EDIT_LABEL = 'Message Edit';
 
@@ -31,12 +30,8 @@ export function decryptMessageEdit(
     Buffer.from([1]),
   ]);
 
-  const key0 = createHmac('sha256', Buffer.alloc(32))
-    .update(msgEncKey)
-    .digest();
-  const decKey = createHmac('sha256', key0)
-    .update(sign)
-    .digest();
+  const key0 = createHmac('sha256', Buffer.alloc(32)).update(msgEncKey).digest();
+  const decKey = createHmac('sha256', key0).update(sign).digest();
 
   const ciphertext = Buffer.from(secretEnc.encPayload);
   const iv = Buffer.from(secretEnc.encIv);
